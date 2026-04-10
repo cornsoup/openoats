@@ -586,6 +586,24 @@ private struct IntelligenceSettingsTab: View {
                     }
                 }
 
+                Section("Live Summary") {
+                    Toggle("Show live summary panel during calls", isOn: $settings.showLiveSummaryPanel)
+                        .font(.system(size: 12))
+                    Text("Displays a real-time summary of the conversation alongside the transcript. Requires an LLM provider to be configured.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if settings.showLiveSummaryPanel {
+                        liveSummarySectionToggle("Topic", key: "topic")
+                        liveSummarySectionToggle("Summary", key: "summary")
+                        liveSummarySectionToggle("Open Questions", key: "openQuestions")
+                        liveSummarySectionToggle("Decisions", key: "recentDecisions")
+                        liveSummarySectionToggle("Tensions", key: "activeTensions")
+                        liveSummarySectionToggle("Their Goals", key: "themGoals")
+                    }
+                }
+
                 Section("Knowledge Base") {
                     Text("Optional. Point this to a folder of notes, docs, or reference material (.md, .txt). During meetings, OpenOats searches this folder to surface relevant context and talking points.")
                         .font(.system(size: 11))
@@ -628,6 +646,23 @@ private struct IntelligenceSettingsTab: View {
             }
             .formStyle(.grouped)
         }
+    }
+
+    private func liveSummarySectionToggle(_ label: String, key: String) -> some View {
+        Toggle(label, isOn: Binding(
+            get: { settings.liveSummarySections.contains(key) },
+            set: { enabled in
+                var sections = settings.liveSummarySections
+                if enabled {
+                    sections.insert(key)
+                } else {
+                    sections.remove(key)
+                }
+                settings.liveSummarySections = sections
+            }
+        ))
+        .font(.system(size: 12))
+        .padding(.leading, 16)
     }
 
     private func chooseKBFolder() {
