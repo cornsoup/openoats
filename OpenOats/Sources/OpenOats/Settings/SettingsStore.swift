@@ -285,6 +285,29 @@ final class SettingsStore {
         }
     }
 
+    @ObservationIgnored nonisolated(unsafe) private var _showLiveSummaryPanel: Bool
+    var showLiveSummaryPanel: Bool {
+        get { access(keyPath: \.showLiveSummaryPanel); return _showLiveSummaryPanel }
+        set {
+            withMutation(keyPath: \.showLiveSummaryPanel) {
+                _showLiveSummaryPanel = newValue
+                defaults.set(newValue, forKey: "showLiveSummaryPanel")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _liveSummarySections: Set<String>
+    var liveSummarySections: Set<String> {
+        get { access(keyPath: \.liveSummarySections); return _liveSummarySections }
+        set {
+            withMutation(keyPath: \.liveSummarySections) {
+                _liveSummarySections = newValue
+                let encoded = try? JSONEncoder().encode(Array(newValue))
+                defaults.set(encoded, forKey: "liveSummarySections")
+            }
+        }
+    }
+
     @ObservationIgnored nonisolated(unsafe) private var _sidebarMode: SidebarMode
     var sidebarMode: SidebarMode {
         get { access(keyPath: \.sidebarMode); return _sidebarMode }
@@ -855,6 +878,17 @@ final class SettingsStore {
             self._suggestionsAlwaysOnTop = true
         } else {
             self._suggestionsAlwaysOnTop = defaults.bool(forKey: "suggestionsAlwaysOnTop")
+        }
+        if defaults.object(forKey: "showLiveSummaryPanel") == nil {
+            self._showLiveSummaryPanel = true
+        } else {
+            self._showLiveSummaryPanel = defaults.bool(forKey: "showLiveSummaryPanel")
+        }
+        if let sectionsData = defaults.data(forKey: "liveSummarySections"),
+           let decoded = try? JSONDecoder().decode([String].self, from: sectionsData) {
+            self._liveSummarySections = Set(decoded)
+        } else {
+            self._liveSummarySections = ["topic", "summary", "openQuestions", "recentDecisions"]
         }
         self._sidebarMode = SidebarMode(rawValue: defaults.string(forKey: "sidebarMode") ?? "") ?? .classicSuggestions
         self._sidecastIntensity = SidecastIntensity(rawValue: defaults.string(forKey: "sidecastIntensity") ?? "") ?? .balanced
