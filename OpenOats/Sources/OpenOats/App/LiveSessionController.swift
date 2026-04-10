@@ -32,6 +32,7 @@ final class LiveSessionState {
     var isMicMuted: Bool = false
     /// The user's live scratchpad text for the active session.
     var scratchpadText: String = ""
+    var conversationState: ConversationState = .empty
 }
 
 /// Owns all live session side effects: polling, utterance ingestion,
@@ -575,6 +576,10 @@ final class LiveSessionController {
         }
         if state.suggestions != sidebarSuggestions {
             state.suggestions = sidebarSuggestions
+        }
+        let nextConversationState = coordinator.transcriptStore.conversationState
+        if state.conversationState.lastUpdatedAt != nextConversationState.lastUpdatedAt {
+            state.conversationState = nextConversationState
         }
     }
 
