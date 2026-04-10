@@ -194,50 +194,21 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
 
-            // Collapsible transcript (hidden when live transcript is disabled)
+            // Transcript + optional live summary sidebar
             if controllerState.showLiveTranscript {
-                DisclosureGroup(isExpanded: $isTranscriptExpanded) {
-                    IsolatedTranscriptWrapper(state: controllerState)
-                        .frame(height: 150)
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Transcript")
-                            .font(.system(size: 12, weight: .medium))
-                        if !controllerState.liveTranscript.isEmpty {
-                            Text("(\(controllerState.liveTranscript.count))")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.tertiary)
-                        }
-                        Spacer()
-                        if isTranscriptExpanded && !controllerState.liveTranscript.isEmpty {
-                            Button {
-                                openWindow(id: "transcript")
-                            } label: {
-                                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .padding(4)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                            }
-                            .buttonStyle(.plain)
-                            .help("Open transcript in separate window")
-
-                            Button {
-                                copyTranscript()
-                            } label: {
-                                Image(systemName: "doc.on.doc")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .padding(4)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                            }
-                            .buttonStyle(.plain)
-                            .help("Copy transcript")
-                        }
+                if controllerState.isRunning && settings.showLiveSummaryPanel {
+                    HSplitView {
+                        transcriptSection(controllerState: controllerState)
+                        LiveSummaryPanel(
+                            conversationState: controllerState.conversationState,
+                            visibleSections: settings.liveSummarySections
+                        )
+                        .frame(minWidth: 150, idealWidth: 200)
                     }
+                    .frame(minHeight: 150)
+                } else {
+                    transcriptSection(controllerState: controllerState)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
             }
 
             // Collapsible scratchpad during live session
@@ -268,6 +239,52 @@ struct ContentView: View {
             )
         }
         .padding(.top, max(windowChromeTopInset - compactHeaderVerticalPadding, 0))
+    }
+
+    @ViewBuilder
+    private func transcriptSection(controllerState: LiveSessionState) -> some View {
+        DisclosureGroup(isExpanded: $isTranscriptExpanded) {
+            IsolatedTranscriptWrapper(state: controllerState)
+                .frame(height: 150)
+        } label: {
+            HStack(spacing: 6) {
+                Text("Transcript")
+                    .font(.system(size: 12, weight: .medium))
+                if !controllerState.liveTranscript.isEmpty {
+                    Text("(\(controllerState.liveTranscript.count))")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                if isTranscriptExpanded && !controllerState.liveTranscript.isEmpty {
+                    Button {
+                        openWindow(id: "transcript")
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .padding(4)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open transcript in separate window")
+
+                    Button {
+                        copyTranscript()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .padding(4)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy transcript")
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 
     private var bodyWithModifiers: some View {
