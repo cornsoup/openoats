@@ -199,11 +199,12 @@ struct ContentView: View {
                 if controllerState.isRunning && settings.showLiveSummaryPanel {
                     HSplitView {
                         transcriptSection(controllerState: controllerState)
+                            .frame(minWidth: 150)
                         LiveSummaryPanel(
                             conversationState: controllerState.conversationState,
                             visibleSections: settings.liveSummarySections
                         )
-                        .frame(minWidth: 150, idealWidth: 200)
+                        .frame(minWidth: 150, idealWidth: 200, maxWidth: 280)
                     }
                     .frame(minHeight: 150)
                 } else {
