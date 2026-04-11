@@ -11,6 +11,7 @@ public struct OpenOatsRootApp: App {
     @State private var settings: AppSettings
     @State private var coordinator: AppCoordinator
     @State private var container: AppContainer
+    @State private var focusedPane = FocusedPaneStore()
     private let updaterController: AppUpdaterController
     private let defaults: UserDefaults
 
@@ -28,6 +29,7 @@ public struct OpenOatsRootApp: App {
             ContentView(settings: settings)
                 .environment(container)
                 .environment(coordinator)
+                .environment(focusedPane)
                 .defaultAppStorage(defaults)
                 .onAppear {
                     appDelegate.coordinator = coordinator
@@ -92,6 +94,26 @@ public struct OpenOatsRootApp: App {
                         NSWorkspace.shared.open(url)
                     }
                 }
+            }
+
+            CommandMenu("View") {
+                Button("Zoom In") {
+                    adjustZoom(by: 0.1)
+                }
+                .keyboardShortcut("=", modifiers: .command)
+                .disabled(focusedPane.focused == nil)
+
+                Button("Zoom Out") {
+                    adjustZoom(by: -0.1)
+                }
+                .keyboardShortcut("-", modifiers: .command)
+                .disabled(focusedPane.focused == nil)
+
+                Button("Reset Zoom") {
+                    resetZoom()
+                }
+                .keyboardShortcut("0", modifiers: .command)
+                .disabled(focusedPane.focused == nil)
             }
         }
 
@@ -208,6 +230,29 @@ extension OpenOatsRootApp {
                 await repo.deleteSession(sessionID: sessionID)
                 await coordinator.loadHistory()
             }
+        }
+    }
+
+    private func adjustZoom(by delta: Double) {
+        guard let pane = focusedPane.focused else { return }
+        let minZoom = 0.7
+        let maxZoom = 2.0
+        switch pane {
+        case .transcript:
+            settings.transcriptZoom = min(maxZoom, max(minZoom, settings.transcriptZoom + delta))
+        case .summary:
+            settings.summaryZoom = min(maxZoom, max(minZoom, settings.summaryZoom + delta))
+        case .suggestions:
+            settings.suggestionsZoom = min(maxZoom, max(minZoom, settings.suggestionsZoom + delta))
+        }
+    }
+
+    private func resetZoom() {
+        guard let pane = focusedPane.focused else { return }
+        switch pane {
+        case .transcript: settings.transcriptZoom = 1.0
+        case .summary: settings.summaryZoom = 1.0
+        case .suggestions: settings.suggestionsZoom = 1.0
         }
     }
 
