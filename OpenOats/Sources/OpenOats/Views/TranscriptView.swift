@@ -4,6 +4,7 @@ struct TranscriptView: View {
     let utterances: [Utterance]
     let volatileYouText: String
     let volatileThemText: String
+    var zoom: Double = 1.0
     var showSearch: Bool = false
 
     @State private var searchText = ""
@@ -83,19 +84,20 @@ struct TranscriptView: View {
                             let utterance = visible[index]
                             UtteranceBubble(
                                 utterance: utterance,
-                                showTimestamp: shouldShowTimestamp(at: index, in: visible)
+                                showTimestamp: shouldShowTimestamp(at: index, in: visible),
+                                zoom: zoom
                             )
                             .id(utterance.id)
                         }
 
                         if !isSearching {
                             if !volatileYouText.isEmpty {
-                                VolatileIndicator(text: volatileYouText, speaker: .you)
+                                VolatileIndicator(text: volatileYouText, speaker: .you, zoom: zoom)
                                     .id("volatile-you")
                             }
 
                             if !volatileThemText.isEmpty {
-                                VolatileIndicator(text: volatileThemText, speaker: .them)
+                                VolatileIndicator(text: volatileThemText, speaker: .them, zoom: zoom)
                                     .id("volatile-them")
                             }
                         }
@@ -167,6 +169,7 @@ private let timestampFormatter: DateFormatter = {
 private struct UtteranceBubble: View {
     let utterance: Utterance
     var showTimestamp: Bool = true
+    var zoom: Double = 1.0
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -186,7 +189,7 @@ private struct UtteranceBubble: View {
                 .frame(minWidth: 36, alignment: .trailing)
 
             Text(utterance.displayText)
-                .font(.system(size: 13))
+                .font(.system(size: 13 * zoom))
                 .foregroundStyle(.primary)
                 .textSelection(.enabled)
         }
@@ -196,6 +199,7 @@ private struct UtteranceBubble: View {
 private struct VolatileIndicator: View {
     let text: String
     let speaker: Speaker
+    var zoom: Double = 1.0
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -209,7 +213,7 @@ private struct VolatileIndicator: View {
 
             HStack(spacing: 4) {
                 Text(text)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13 * zoom))
                     .foregroundStyle(.secondary)
                 Circle()
                     .fill(speaker.color)
