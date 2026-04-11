@@ -137,6 +137,7 @@ final class AppContainer {
             knowledgeBase: knowledgeBase,
             settings: settings
         )
+        let liveSummaryEngine = LiveSummaryEngine(settings: settings)
 
         let transcriptionEngine: TranscriptionEngine
         switch mode {
@@ -157,6 +158,7 @@ final class AppContainer {
             knowledgeBase: knowledgeBase,
             suggestionEngine: suggestionEngine,
             sidecastEngine: sidecastEngine,
+            liveSummaryEngine: liveSummaryEngine,
             transcriptionEngine: transcriptionEngine,
             liveTranscriptCleaner: LiveTranscriptCleaner(
                 settings: settings,
@@ -179,7 +181,8 @@ final class AppContainer {
         coordinator.setViewServices(
             knowledgeBase: services.knowledgeBase,
             suggestionEngine: services.suggestionEngine,
-            sidecastEngine: services.sidecastEngine
+            sidecastEngine: services.sidecastEngine,
+            liveSummaryEngine: services.liveSummaryEngine
         )
     }
 
