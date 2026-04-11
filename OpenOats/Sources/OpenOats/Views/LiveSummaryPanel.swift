@@ -4,6 +4,7 @@ struct LiveSummaryPanel: View {
     let summary: String
     let keyPoints: [String]
     let isGenerating: Bool
+    var zoom: Double = 1.0
 
     @State private var previousSummary: String = ""
     @State private var previousKeyPoints: [String] = []
@@ -65,7 +66,7 @@ struct LiveSummaryPanel: View {
                 Spacer()
             }
             Text(summary)
-                .font(.system(size: 13))
+                .font(.system(size: 13 * zoom))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -83,10 +84,10 @@ struct LiveSummaryPanel: View {
             ForEach(keyPoints, id: \.self) { point in
                 HStack(alignment: .top, spacing: 6) {
                     Text("•")
-                        .font(.system(size: 13))
+                        .font(.system(size: 13 * zoom))
                         .foregroundStyle(.secondary)
                     Text(point)
-                        .font(.system(size: 13))
+                        .font(.system(size: 13 * zoom))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(4)
