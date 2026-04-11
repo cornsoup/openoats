@@ -298,7 +298,7 @@ struct ContentView: View {
             .background {
                 WindowChromeTopInsetReader(topInset: $windowChromeTopInset)
             }
-            .frame(minWidth: 360, maxWidth: 600, minHeight: 400)
+            .frame(minWidth: 360, minHeight: 400)
             .background(.ultraThinMaterial)
     }
 
