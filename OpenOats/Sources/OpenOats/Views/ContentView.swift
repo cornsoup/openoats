@@ -198,15 +198,13 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
 
-            // Stacked panes during live session
-            if controllerState.isRunning {
-                StackedPanesView(
-                    controllerState: controllerState,
-                    settings: settings,
-                    focusedPane: focusedPane
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            // Stacked panes (always visible; show empty-state placeholders when idle)
+            StackedPanesView(
+                controllerState: controllerState,
+                settings: settings,
+                focusedPane: focusedPane
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             // Collapsible scratchpad during live session
             if controllerState.isRunning {

@@ -96,24 +96,24 @@ public struct OpenOatsRootApp: App {
                 }
             }
 
-            CommandMenu("View") {
+            // Add zoom items to the existing View menu
+            CommandGroup(before: .toolbar) {
                 Button("Zoom In") {
                     adjustZoom(by: 0.1)
                 }
                 .keyboardShortcut("=", modifiers: .command)
-                .disabled(focusedPane.focused == nil)
 
                 Button("Zoom Out") {
                     adjustZoom(by: -0.1)
                 }
                 .keyboardShortcut("-", modifiers: .command)
-                .disabled(focusedPane.focused == nil)
 
                 Button("Reset Zoom") {
                     resetZoom()
                 }
                 .keyboardShortcut("0", modifiers: .command)
-                .disabled(focusedPane.focused == nil)
+
+                Divider()
             }
         }
 
@@ -347,6 +347,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         registerGlobalHotkey()
+
+        removeEnterFullScreenMenuItem()
+    }
+
+    /// Removes the auto-added "Enter Full Screen" item from the View menu.
+    /// We don't want this — users can use the green traffic light or Mission Control.
+    private func removeEnterFullScreenMenuItem() {
+        guard let viewMenu = NSApp.mainMenu?.items.first(where: { $0.submenu?.title == "View" })?.submenu else {
+            return
+        }
+        for item in viewMenu.items where item.title == "Enter Full Screen" {
+            viewMenu.removeItem(item)
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

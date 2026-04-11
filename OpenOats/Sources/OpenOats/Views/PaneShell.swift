@@ -42,9 +42,11 @@ struct PaneShell<Content: View>: View {
                 content()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
-                    .onTapGesture {
-                        focusedPane.focused = paneID
-                    }
+                    .simultaneousGesture(
+                        TapGesture().onEnded { _ in
+                            focusedPane.focused = paneID
+                        }
+                    )
             }
         }
         .overlay(
