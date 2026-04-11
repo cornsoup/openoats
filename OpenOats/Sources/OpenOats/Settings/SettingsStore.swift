@@ -296,6 +296,72 @@ final class SettingsStore {
         }
     }
 
+    @ObservationIgnored nonisolated(unsafe) private var _transcriptZoom: Double
+    var transcriptZoom: Double {
+        get { access(keyPath: \.transcriptZoom); return _transcriptZoom }
+        set {
+            withMutation(keyPath: \.transcriptZoom) {
+                _transcriptZoom = newValue
+                defaults.set(newValue, forKey: "transcriptZoom")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _summaryZoom: Double
+    var summaryZoom: Double {
+        get { access(keyPath: \.summaryZoom); return _summaryZoom }
+        set {
+            withMutation(keyPath: \.summaryZoom) {
+                _summaryZoom = newValue
+                defaults.set(newValue, forKey: "summaryZoom")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _suggestionsZoom: Double
+    var suggestionsZoom: Double {
+        get { access(keyPath: \.suggestionsZoom); return _suggestionsZoom }
+        set {
+            withMutation(keyPath: \.suggestionsZoom) {
+                _suggestionsZoom = newValue
+                defaults.set(newValue, forKey: "suggestionsZoom")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _transcriptCollapsed: Bool
+    var transcriptCollapsed: Bool {
+        get { access(keyPath: \.transcriptCollapsed); return _transcriptCollapsed }
+        set {
+            withMutation(keyPath: \.transcriptCollapsed) {
+                _transcriptCollapsed = newValue
+                defaults.set(newValue, forKey: "transcriptCollapsed")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _summaryCollapsed: Bool
+    var summaryCollapsed: Bool {
+        get { access(keyPath: \.summaryCollapsed); return _summaryCollapsed }
+        set {
+            withMutation(keyPath: \.summaryCollapsed) {
+                _summaryCollapsed = newValue
+                defaults.set(newValue, forKey: "summaryCollapsed")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _suggestionsCollapsed: Bool
+    var suggestionsCollapsed: Bool {
+        get { access(keyPath: \.suggestionsCollapsed); return _suggestionsCollapsed }
+        set {
+            withMutation(keyPath: \.suggestionsCollapsed) {
+                _suggestionsCollapsed = newValue
+                defaults.set(newValue, forKey: "suggestionsCollapsed")
+            }
+        }
+    }
+
     @ObservationIgnored nonisolated(unsafe) private var _sidebarMode: SidebarMode
     var sidebarMode: SidebarMode {
         get { access(keyPath: \.sidebarMode); return _sidebarMode }
@@ -872,6 +938,31 @@ final class SettingsStore {
         } else {
             self._showLiveSummaryPanel = defaults.bool(forKey: "showLiveSummaryPanel")
         }
+
+        // Zoom levels default to 1.0 (no zoom)
+        if defaults.object(forKey: "transcriptZoom") != nil {
+            self._transcriptZoom = defaults.double(forKey: "transcriptZoom")
+        } else {
+            self._transcriptZoom = 1.0
+        }
+
+        if defaults.object(forKey: "summaryZoom") != nil {
+            self._summaryZoom = defaults.double(forKey: "summaryZoom")
+        } else {
+            self._summaryZoom = 1.0
+        }
+
+        if defaults.object(forKey: "suggestionsZoom") != nil {
+            self._suggestionsZoom = defaults.double(forKey: "suggestionsZoom")
+        } else {
+            self._suggestionsZoom = 1.0
+        }
+
+        // Collapse state defaults to expanded (false)
+        self._transcriptCollapsed = defaults.bool(forKey: "transcriptCollapsed")
+        self._summaryCollapsed = defaults.bool(forKey: "summaryCollapsed")
+        self._suggestionsCollapsed = defaults.bool(forKey: "suggestionsCollapsed")
+
         self._sidebarMode = SidebarMode(rawValue: defaults.string(forKey: "sidebarMode") ?? "") ?? .classicSuggestions
         self._sidecastIntensity = SidecastIntensity(rawValue: defaults.string(forKey: "sidecastIntensity") ?? "") ?? .balanced
         self._sidecastPersonas = Self.decodePersonas(defaults.data(forKey: "sidecastPersonas")) ?? SidecastPersona.starterPack
