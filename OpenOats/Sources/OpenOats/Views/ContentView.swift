@@ -17,7 +17,6 @@ struct ContentView: View {
     @State private var overlayManager = OverlayManager()
     @State private var miniBarManager = MiniBarManager()
     @State private var liveSessionController: LiveSessionController?
-    @AppStorage("isTranscriptExpanded") private var isTranscriptExpanded = true
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var showOnboarding = false
     @State private var showConsentSheet = false
