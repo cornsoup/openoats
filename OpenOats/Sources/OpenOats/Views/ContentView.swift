@@ -12,6 +12,7 @@ struct ContentView: View {
     @Bindable var settings: AppSettings
     @Environment(AppContainer.self) private var container
     @Environment(AppCoordinator.self) private var coordinator
+    @Environment(FocusedPaneStore.self) private var focusedPane
     @Environment(\.openWindow) private var openWindow
     @State private var overlayManager = OverlayManager()
     @State private var miniBarManager = MiniBarManager()
@@ -167,6 +168,9 @@ struct ContentView: View {
                 Divider()
             }
 
+            // NOTE: Floating suggestion panel disabled in favor of inline Suggestions pane.
+            // To restore, uncomment this block and the OverlayManager wiring in .task.
+            /*
             // Suggestion panel status
             if controllerState.isRunning {
                 HStack(spacing: 6) {
@@ -191,26 +195,18 @@ struct ContentView: View {
 
                 Divider()
             }
+            */
 
             Spacer(minLength: 0)
 
-            // Transcript + optional live summary sidebar
-            if controllerState.showLiveTranscript {
-                if controllerState.isRunning && settings.showLiveSummaryPanel {
-                    HSplitView {
-                        transcriptSection(controllerState: controllerState)
-                            .frame(minWidth: 200)
-                        LiveSummaryPanel(
-                            summary: controllerState.liveSummary,
-                            keyPoints: controllerState.liveKeyPoints,
-                            isGenerating: controllerState.liveSummaryIsGenerating
-                        )
-                        .frame(minWidth: 200, idealWidth: 280)
-                    }
-                    .frame(minHeight: 150)
-                } else {
-                    transcriptSection(controllerState: controllerState)
-                }
+            // Stacked panes during live session
+            if controllerState.isRunning {
+                StackedPanesView(
+                    controllerState: controllerState,
+                    settings: settings,
+                    focusedPane: focusedPane
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             // Collapsible scratchpad during live session
@@ -241,52 +237,6 @@ struct ContentView: View {
             )
         }
         .padding(.top, max(windowChromeTopInset - compactHeaderVerticalPadding, 0))
-    }
-
-    @ViewBuilder
-    private func transcriptSection(controllerState: LiveSessionState) -> some View {
-        DisclosureGroup(isExpanded: $isTranscriptExpanded) {
-            IsolatedTranscriptWrapper(state: controllerState)
-                .frame(height: 150)
-        } label: {
-            HStack(spacing: 6) {
-                Text("Transcript")
-                    .font(.system(size: 12, weight: .medium))
-                if !controllerState.liveTranscript.isEmpty {
-                    Text("(\(controllerState.liveTranscript.count))")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-                Spacer()
-                if isTranscriptExpanded && !controllerState.liveTranscript.isEmpty {
-                    Button {
-                        openWindow(id: "transcript")
-                    } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .padding(4)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open transcript in separate window")
-
-                    Button {
-                        copyTranscript()
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .padding(4)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Copy transcript")
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
     }
 
     private var bodyWithModifiers: some View {
@@ -572,18 +522,6 @@ private struct ScratchpadSection: View {
 }
 
 // MARK: - Isolated View Wrappers
-
-private struct IsolatedTranscriptWrapper: View {
-    let state: LiveSessionState
-    
-    var body: some View {
-        TranscriptView(
-            utterances: state.liveTranscript,
-            volatileYouText: state.volatileYouText,
-            volatileThemText: state.volatileThemText
-        )
-    }
-}
 
 private struct IsolatedControlBarWrapper: View {
     let state: LiveSessionState
