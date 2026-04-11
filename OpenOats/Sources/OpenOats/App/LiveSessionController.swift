@@ -32,7 +32,9 @@ final class LiveSessionState {
     var isMicMuted: Bool = false
     /// The user's live scratchpad text for the active session.
     var scratchpadText: String = ""
-    var conversationState: ConversationState = .empty
+    var liveSummary: String = ""
+    var liveKeyPoints: [String] = []
+    var liveSummaryIsGenerating: Bool = false
 }
 
 /// Owns all live session side effects: polling, utterance ingestion,
@@ -126,6 +128,7 @@ final class LiveSessionController {
     func startSession(settings: AppSettings) {
         coordinator.suggestionEngine?.clear()
         coordinator.sidecastEngine?.clear()
+        coordinator.liveSummaryEngine?.clear()
         let calEvent = settings.calendarIntegrationEnabled
             ? container.calendarManager?.currentEvent()
             : nil
@@ -227,6 +230,9 @@ final class LiveSessionController {
         case .sidecast:
             coordinator.sidecastEngine?.onUtterance(last)
         }
+
+        // Live summary runs independently of sidebar mode
+        coordinator.liveSummaryEngine?.onUtterance(last)
 
         Task {
             await coordinator.sessionRepository.appendLiveUtterance(
@@ -577,9 +583,12 @@ final class LiveSessionController {
         if state.suggestions != sidebarSuggestions {
             state.suggestions = sidebarSuggestions
         }
-        let nextConversationState = coordinator.transcriptStore.conversationState
-        if state.conversationState.lastUpdatedAt != nextConversationState.lastUpdatedAt {
-            state.conversationState = nextConversationState
+        let summaryEngine = coordinator.liveSummaryEngine
+        set(\.liveSummary, summaryEngine?.accumulatedSummary ?? "")
+        set(\.liveSummaryIsGenerating, summaryEngine?.isGenerating ?? false)
+        let nextKeyPoints = summaryEngine?.keyPoints ?? []
+        if state.liveKeyPoints != nextKeyPoints {
+            state.liveKeyPoints = nextKeyPoints
         }
     }
 
