@@ -170,6 +170,7 @@ final class LiveSummaryEngineTests: XCTestCase {
         XCTAssertEqual(engine.summariesByLevel[5], "canonical", "empty level-5 must not overwrite prior canonical summary")
         XCTAssertEqual(engine.summariesByLevel[1], "new1")
         XCTAssertEqual(engine.summariesByLevel[3], "new3")
+        XCTAssertTrue(engine.keyPointsItems.isEmpty, "newItems: {} should leave item lists empty")
     }
 
     func testMalformedJSONLeavesStateIntact() async {
