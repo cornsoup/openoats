@@ -32,8 +32,11 @@ final class LiveSessionState {
     var isMicMuted: Bool = false
     /// The user's live scratchpad text for the active session.
     var scratchpadText: String = ""
-    var liveSummary: String = ""
-    var liveKeyPoints: [String] = []
+    var liveSummariesByLevel: [Int: String] = [:]
+    var liveKeyPoints:     [SummaryItem] = []
+    var liveActionItems:   [SummaryItem] = []
+    var liveDecisions:     [SummaryItem] = []
+    var liveOpenQuestions: [SummaryItem] = []
     var liveSummaryIsGenerating: Bool = false
 }
 
@@ -584,11 +587,27 @@ final class LiveSessionController {
             state.suggestions = sidebarSuggestions
         }
         let summaryEngine = coordinator.liveSummaryEngine
-        set(\.liveSummary, summaryEngine?.accumulatedSummary ?? "")
         set(\.liveSummaryIsGenerating, summaryEngine?.isGenerating ?? false)
-        let nextKeyPoints = summaryEngine?.keyPoints ?? []
+
+        let nextSummaries = summaryEngine?.summariesByLevel ?? [:]
+        if state.liveSummariesByLevel != nextSummaries {
+            state.liveSummariesByLevel = nextSummaries
+        }
+        let nextKeyPoints = summaryEngine?.keyPointsItems ?? []
         if state.liveKeyPoints != nextKeyPoints {
             state.liveKeyPoints = nextKeyPoints
+        }
+        let nextActions = summaryEngine?.actionItems ?? []
+        if state.liveActionItems != nextActions {
+            state.liveActionItems = nextActions
+        }
+        let nextDecisions = summaryEngine?.decisions ?? []
+        if state.liveDecisions != nextDecisions {
+            state.liveDecisions = nextDecisions
+        }
+        let nextOpenQs = summaryEngine?.openQuestions ?? []
+        if state.liveOpenQuestions != nextOpenQs {
+            state.liveOpenQuestions = nextOpenQs
         }
     }
 
