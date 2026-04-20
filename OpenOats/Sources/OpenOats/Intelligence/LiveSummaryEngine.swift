@@ -234,7 +234,7 @@ final class LiveSummaryEngine {
         1. Five prose summaries, each a distillation of the SAME underlying content:
            - Level 5: updated running summary, incorporates the new material.
            - Levels 1-4: strict distillations of level 5, progressively tighter.
-           - Level 1 is one paragraph. Level 3 is the current baseline. Level 5 is comprehensive.
+           - Level 1 is one or two sentences (tightest). Level 3 is a short paragraph (current baseline). Level 5 is multi-paragraph, near-transcript (most comprehensive).
            All five describe the same meeting; they differ only in density.
 
         2. Four lists of NEW items from only the new utterances (not already in the accumulated items shown below):
