@@ -1,11 +1,28 @@
 import Foundation
 import Observation
 
+/// A single item in one of the live-summary sections (Key Points, Action Items, etc.).
+/// `level` is 1-5 (1 = essential, 5 = minor detail). Levels are locked at creation.
+struct SummaryItem: Equatable, Hashable, Sendable {
+    let text: String
+    let level: Int
+}
+
 /// Builds an accumulating meeting summary + key points list via periodic LLM calls.
 /// Independent of the suggestion pipeline — runs regardless of sidebar mode.
 @Observable
 @MainActor
 final class LiveSummaryEngine {
+    // MARK: - Mode
+
+    enum Mode {
+        /// Normal operation — calls the LLM via `OpenRouterClient`.
+        case live
+        /// Test mode — returns canned JSON responses instead of calling the LLM.
+        /// Responses are consumed in order; if the list is exhausted the last response repeats.
+        case scripted(responses: [String])
+    }
+
     // MARK: - Observable State
 
     @ObservationIgnored nonisolated(unsafe) private var _accumulatedSummary: String = ""
@@ -40,8 +57,12 @@ final class LiveSummaryEngine {
 
     // MARK: - Init
 
-    init(settings: AppSettings) {
+    private let mode: Mode
+    private var scriptedResponseIndex: Int = 0
+
+    init(settings: AppSettings, mode: Mode = .live) {
         self.settings = settings
+        self.mode = mode
     }
 
     // MARK: - Public API
