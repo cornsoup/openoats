@@ -95,6 +95,128 @@ final class LiveSummaryEngineTests: XCTestCase {
         XCTAssertEqual(engine.keyPointsItems.first?.level, 1, "original level must win when LLM re-emits with different level")
     }
 
+    func testItemLevelClampedIntoRange() async {
+        let response = """
+        {
+          "summaries": { "1":"a","2":"a","3":"a","4":"a","5":"a" },
+          "newItems": {
+            "keyPoints": [
+              { "text": "too low",  "level": 0 },
+              { "text": "too high", "level": 99 }
+            ]
+          }
+        }
+        """
+        let engine = makeEngine(responses: [response])
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+
+        XCTAssertEqual(engine.keyPointsItems, [
+            SummaryItem(text: "too low", level: 1),
+            SummaryItem(text: "too high", level: 5),
+        ])
+    }
+
+    func testItemMissingLevelDefaultsToThree() async {
+        let response = """
+        {
+          "summaries": { "1":"a","2":"a","3":"a","4":"a","5":"a" },
+          "newItems": { "keyPoints": [{ "text": "no level" }] }
+        }
+        """
+        let engine = makeEngine(responses: [response])
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+
+        XCTAssertEqual(engine.keyPointsItems, [SummaryItem(text: "no level", level: 3)])
+    }
+
+    func testMissingSectionTreatedAsEmpty() async {
+        let response = """
+        {
+          "summaries": { "1":"a","2":"a","3":"a","4":"a","5":"a" },
+          "newItems": { "keyPoints": [{ "text": "K", "level": 1 }] }
+        }
+        """
+        let engine = makeEngine(responses: [response])
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+
+        XCTAssertEqual(engine.keyPointsItems.count, 1)
+        XCTAssertTrue(engine.actionItems.isEmpty)
+        XCTAssertTrue(engine.decisions.isEmpty)
+        XCTAssertTrue(engine.openQuestions.isEmpty)
+    }
+
+    func testEmptyLevel5DoesNotOverwriteCanonical() async {
+        let first = """
+        {
+          "summaries": { "1":"L1","2":"L2","3":"L3","4":"L4","5":"canonical" },
+          "newItems": {}
+        }
+        """
+        let second = """
+        {
+          "summaries": { "1":"new1","2":"new2","3":"new3","4":"new4","5":"" },
+          "newItems": {}
+        }
+        """
+        let engine = makeEngine(responses: [first, second])
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+
+        XCTAssertEqual(engine.summariesByLevel[5], "canonical", "empty level-5 must not overwrite prior canonical summary")
+        XCTAssertEqual(engine.summariesByLevel[1], "new1")
+        XCTAssertEqual(engine.summariesByLevel[3], "new3")
+    }
+
+    func testMalformedJSONLeavesStateIntact() async {
+        let good = """
+        {
+          "summaries": { "1":"a","2":"a","3":"a","4":"a","5":"good" },
+          "newItems": { "keyPoints": [{ "text": "K", "level": 1 }] }
+        }
+        """
+        let bad = "not valid json at all {{{"
+        let engine = makeEngine(responses: [good, bad])
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+
+        XCTAssertEqual(engine.summariesByLevel[5], "good")
+        XCTAssertEqual(engine.keyPointsItems.count, 1)
+        XCTAssertFalse(engine.isGenerating, "isGenerating must reset even on parse failure")
+    }
+
+    func testClearResetsAllState() async {
+        let response = """
+        {
+          "summaries": { "1":"a","2":"a","3":"a","4":"a","5":"a" },
+          "newItems": {
+            "keyPoints":     [{ "text": "K", "level": 1 }],
+            "actionItems":   [{ "text": "A", "level": 2 }],
+            "decisions":     [{ "text": "D", "level": 1 }],
+            "openQuestions": [{ "text": "Q", "level": 3 }]
+          }
+        }
+        """
+        let engine = makeEngine(responses: [response])
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+
+        engine.clear()
+
+        XCTAssertTrue(engine.summariesByLevel.isEmpty)
+        XCTAssertTrue(engine.keyPointsItems.isEmpty)
+        XCTAssertTrue(engine.actionItems.isEmpty)
+        XCTAssertTrue(engine.decisions.isEmpty)
+        XCTAssertTrue(engine.openQuestions.isEmpty)
+        XCTAssertFalse(engine.isGenerating)
+    }
+
     func testScriptedResponsePopulatesSummariesAndItems() async {
         let response = """
         {
