@@ -6,6 +6,11 @@ import Observation
 struct SummaryItem: Equatable, Hashable, Sendable {
     let text: String
     let level: Int
+
+    init(text: String, level: Int) {
+        self.text = text
+        self.level = max(1, min(5, level))
+    }
 }
 
 /// Builds an accumulating meeting summary + key points list via periodic LLM calls.
