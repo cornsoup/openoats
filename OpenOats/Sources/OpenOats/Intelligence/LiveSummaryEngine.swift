@@ -66,18 +66,6 @@ final class LiveSummaryEngine {
         set { withMutation(keyPath: \.isGenerating) { _isGenerating = newValue } }
     }
 
-    // MARK: - Backward-compat shims (removed in Task 7)
-
-    /// Projects the level-3 (default baseline) summary for callers that still expect a single string.
-    var accumulatedSummary: String {
-        summariesByLevel[3] ?? summariesByLevel[5] ?? ""
-    }
-
-    /// Projects key-point item texts as a flat array for callers that still expect [String].
-    var keyPoints: [String] {
-        keyPointsItems.map(\.text)
-    }
-
     // MARK: - Internal State
 
     private var utteranceBuffer: [Utterance] = []

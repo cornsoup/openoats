@@ -33,10 +33,14 @@ struct StackedPanesView: View {
                 focusedPane: focusedPane
             ) {
                 LiveSummaryPanel(
-                    summary: controllerState.liveSummary,
-                    keyPoints: controllerState.liveKeyPoints,
-                    isGenerating: controllerState.liveSummaryIsGenerating,
-                    zoom: settings.summaryZoom
+                    summariesByLevel: controllerState.liveSummariesByLevel,
+                    keyPoints:       controllerState.liveKeyPoints,
+                    actionItems:     controllerState.liveActionItems,
+                    decisions:       controllerState.liveDecisions,
+                    openQuestions:   controllerState.liveOpenQuestions,
+                    isGenerating:    controllerState.liveSummaryIsGenerating,
+                    detailLevel:     $settings.summaryDetailLevel,
+                    zoom:            settings.summaryZoom
                 )
             }
             .frame(minHeight: settings.summaryCollapsed ? 28 : 80)
