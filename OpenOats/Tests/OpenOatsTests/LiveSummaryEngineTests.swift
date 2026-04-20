@@ -50,6 +50,51 @@ final class LiveSummaryEngineTests: XCTestCase {
 
     // MARK: - Tests
 
+    func testDuplicateItemsDroppedCaseInsensitive() async {
+        let first = """
+        {
+          "summaries": { "1":"a","2":"a","3":"a","4":"a","5":"a" },
+          "newItems": { "keyPoints": [{ "text": "Launch on April 15", "level": 1 }] }
+        }
+        """
+        let second = """
+        {
+          "summaries": { "1":"b","2":"b","3":"b","4":"b","5":"b" },
+          "newItems": { "keyPoints": [{ "text": "launch on april 15", "level": 5 }] }
+        }
+        """
+        let engine = makeEngine(responses: [first, second])
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+
+        XCTAssertEqual(engine.keyPointsItems, [SummaryItem(text: "Launch on April 15", level: 1)])
+    }
+
+    func testReemittedItemKeepsOriginalLevel() async {
+        let first = """
+        {
+          "summaries": { "1":"a","2":"a","3":"a","4":"a","5":"a" },
+          "newItems": { "keyPoints": [{ "text": "CAC under $50", "level": 1 }] }
+        }
+        """
+        let second = """
+        {
+          "summaries": { "1":"b","2":"b","3":"b","4":"b","5":"b" },
+          "newItems": { "keyPoints": [{ "text": "CAC under $50", "level": 4 }] }
+        }
+        """
+        let engine = makeEngine(responses: [first, second])
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+        for u in sixUtterances() { engine.onUtterance(u) }
+        await waitForEngineIdle(engine)
+
+        XCTAssertEqual(engine.keyPointsItems.count, 1)
+        XCTAssertEqual(engine.keyPointsItems.first?.level, 1, "original level must win when LLM re-emits with different level")
+    }
+
     func testScriptedResponsePopulatesSummariesAndItems() async {
         let response = """
         {

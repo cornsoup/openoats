@@ -194,11 +194,24 @@ final class LiveSummaryEngine {
         }
         summariesByLevel = merged
 
-        // Append new items per section (no dedup yet — Task 4 adds it).
-        keyPointsItems  += (update.newItems.keyPoints     ?? []).map { toSummaryItem($0) }
-        actionItems     += (update.newItems.actionItems   ?? []).map { toSummaryItem($0) }
-        decisions       += (update.newItems.decisions     ?? []).map { toSummaryItem($0) }
-        openQuestions   += (update.newItems.openQuestions ?? []).map { toSummaryItem($0) }
+        keyPointsItems  = mergedSection(existing: keyPointsItems,  incoming: update.newItems.keyPoints     ?? [])
+        actionItems     = mergedSection(existing: actionItems,     incoming: update.newItems.actionItems   ?? [])
+        decisions       = mergedSection(existing: decisions,       incoming: update.newItems.decisions     ?? [])
+        openQuestions   = mergedSection(existing: openQuestions,   incoming: update.newItems.openQuestions ?? [])
+    }
+
+    private func mergedSection(existing: [SummaryItem], incoming: [SummaryUpdate.Item]) -> [SummaryItem] {
+        var seen = Set(existing.map { $0.text.lowercased() })
+        var result = existing
+        for raw in incoming {
+            let item = toSummaryItem(raw)
+            guard !item.text.isEmpty else { continue }
+            let key = item.text.lowercased()
+            if seen.contains(key) { continue }      // dedup + implicit level-lock (original wins)
+            seen.insert(key)
+            result.append(item)
+        }
+        return result
     }
 
     private func toSummaryItem(_ item: SummaryUpdate.Item) -> SummaryItem {
