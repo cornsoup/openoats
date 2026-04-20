@@ -318,6 +318,17 @@ final class SettingsStore {
         }
     }
 
+    @ObservationIgnored nonisolated(unsafe) private var _summaryDetailLevel: Int
+    var summaryDetailLevel: Int {
+        get { access(keyPath: \.summaryDetailLevel); return _summaryDetailLevel }
+        set {
+            withMutation(keyPath: \.summaryDetailLevel) {
+                _summaryDetailLevel = max(1, min(5, newValue))
+                defaults.set(_summaryDetailLevel, forKey: "summaryDetailLevel")
+            }
+        }
+    }
+
     @ObservationIgnored nonisolated(unsafe) private var _suggestionsZoom: Double
     var suggestionsZoom: Double {
         get { access(keyPath: \.suggestionsZoom); return _suggestionsZoom }
@@ -956,6 +967,13 @@ final class SettingsStore {
             self._suggestionsZoom = defaults.double(forKey: "suggestionsZoom")
         } else {
             self._suggestionsZoom = 1.0
+        }
+
+        if defaults.object(forKey: "summaryDetailLevel") != nil {
+            let stored = defaults.integer(forKey: "summaryDetailLevel")
+            self._summaryDetailLevel = max(1, min(5, stored))
+        } else {
+            self._summaryDetailLevel = 3
         }
 
         // Collapse state defaults to expanded (false)
