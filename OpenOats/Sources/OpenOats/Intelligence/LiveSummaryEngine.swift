@@ -13,8 +13,23 @@ struct SummaryItem: Equatable, Hashable, Sendable {
     }
 }
 
-/// Builds an accumulating meeting summary + key points list via periodic LLM calls.
+/// Builds an accumulating meeting summary via periodic LLM calls.
 /// Independent of the suggestion pipeline — runs regardless of sidebar mode.
+///
+/// Architectural invariants (don't break these without a plan):
+/// - **Level 5 is canonical.** On each update, the previous level-5 summary is
+///   sent back to the LLM as context. Levels 1-4 are re-derived per update and
+///   can be freely overwritten.
+/// - **Empty level-5 is protected.** If the LLM returns "" for level 5,
+///   `applyUpdate` preserves the prior canonical summary. Lower levels still
+///   update from the incoming response.
+/// - **Item levels are locked at creation.** When the LLM re-emits an item
+///   whose lowercased text already exists in its section, the incoming item
+///   is dropped entirely (see `mergedSection`) so the original's level wins.
+///   This prevents visual jitter when the user drags the detail slider.
+/// - **Section identity matters.** Dedup is intra-section. Cross-section text
+///   collisions are allowed (same text can appear in both Decisions and Action
+///   Items, for example).
 @Observable
 @MainActor
 final class LiveSummaryEngine {
@@ -144,6 +159,8 @@ final class LiveSummaryEngine {
                     apiKey: llmApiKey,
                     model: activePrimaryModel,
                     messages: prompt,
+                    // Accommodates 5 prose summaries + 4 section arrays per update.
+                    // Truncation trips the JSON-parse-fail path, which safely skips the update.
                     maxTokens: 3072,
                     baseURL: llmBaseURL
                 )

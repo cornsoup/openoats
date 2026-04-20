@@ -22,6 +22,8 @@ struct LiveSummaryPanel: View {
 
     private var currentSummary: String {
         if let exact = summariesByLevel[detailLevel], !exact.isEmpty { return exact }
+        // Walk outward by distance, preferring tighter (lower) levels at each step.
+        // Out-of-range keys are safely absent from the dict.
         for fallback in [detailLevel - 1, detailLevel + 1, detailLevel - 2, detailLevel + 2, detailLevel - 3, detailLevel + 3, detailLevel - 4, detailLevel + 4] {
             if let candidate = summariesByLevel[fallback], !candidate.isEmpty {
                 return candidate
@@ -30,6 +32,8 @@ struct LiveSummaryPanel: View {
         return ""
     }
 
+    // Key Points and Open Questions filter by detail level.
+    // Action Items and Decisions always render in full — they don't have a meaningful "nice to have" tier.
     private var visibleKeyPoints:     [SummaryItem] { keyPoints.filter     { $0.level <= detailLevel } }
     private var visibleOpenQuestions: [SummaryItem] { openQuestions.filter { $0.level <= detailLevel } }
 
@@ -137,7 +141,7 @@ struct LiveSummaryPanel: View {
             .buttonStyle(.plain)
 
             if !collapsed.wrappedValue {
-                ForEach(items, id: \.text) { item in
+                ForEach(items, id: \.self) { item in
                     HStack(alignment: .top, spacing: 6) {
                         Text("•")
                             .font(.system(size: 13 * zoom))
