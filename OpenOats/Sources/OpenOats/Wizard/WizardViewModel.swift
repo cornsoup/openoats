@@ -233,8 +233,7 @@ final class WizardViewModel {
             guard let recommendation else { return false }
             if recommendation.profile.isCloud {
                 let openRouterValid = openRouterValidation == .valid || openRouterValidation?.isNetworkError == true
-                let needsVoyageKey = intent == .fullCopilot
-                let voyageValid = !needsVoyageKey || voyageValidation == .valid || voyageValidation?.isNetworkError == true
+                let voyageValid = voyageKeyInput.isEmpty || voyageValidation == .valid || voyageValidation?.isNetworkError == true
                 return !openRouterKeyInput.isEmpty && openRouterValid && voyageValid
             }
             if recommendation.profile.isLocal {

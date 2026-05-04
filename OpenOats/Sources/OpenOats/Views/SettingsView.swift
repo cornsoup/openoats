@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import CoreAudio
 import LaunchAtLogin
@@ -62,6 +63,9 @@ private struct GeneralSettingsTab: View {
     @State private var showAutoDetectExplanation = false
     @State private var launchAtLoginEnabled = false
     @State private var showWizard = false
+    @State private var diagnosticsExportMessage: String?
+    @State private var diagnosticsExportHadError = false
+    @State private var diagnosticsExportInFlight = false
 
     var body: some View {
         ScrollView {
@@ -82,6 +86,28 @@ private struct GeneralSettingsTab: View {
                         Button("Choose...") {
                             chooseNotesFolder()
                         }
+                    }
+
+                    HStack(alignment: .center) {
+                        Toggle("", isOn: $settings.saveMeetingTranscriptsInDateSubfolders)
+                            .labelsHidden()
+                            .accessibilityLabel("Save meeting transcripts into subfolders")
+
+                        Text("Save meeting transcripts into subfolders.")
+                            .font(.system(size: 12))
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Spacer()
+
+                        Picker("", selection: $settings.meetingTranscriptDateFolderFormat) {
+                            ForEach(MeetingTranscriptDateFolderFormat.allCases) { format in
+                                Text(format.displayName).tag(format)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 175)
+                        .disabled(!settings.saveMeetingTranscriptsInDateSubfolders)
                     }
                 }
 
@@ -175,12 +201,23 @@ private struct GeneralSettingsTab: View {
                 }
 
                 Section("Calendar") {
-                    Toggle("Auto-title sessions from calendar", isOn: $settings.calendarIntegrationEnabled)
+                    Toggle("Use calendar context for meetings", isOn: $settings.calendarIntegrationEnabled)
                         .font(.system(size: 12))
 
-                    Text("When enabled, OpenOats looks up your calendar for a matching event and uses its title for the session. Calendar access is requested only when you enable this.")
+                    Text("When enabled, OpenOats looks up your calendar for a matching event and uses it to title sessions, show local meeting context, and improve local notes. Calendar access is requested only when you enable this.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
+
+                    if settings.calendarIntegrationEnabled {
+                        Toggle("Include calendar context in cloud-generated notes", isOn: $settings.shareCalendarContextWithCloudNotes)
+                            .font(.system(size: 12))
+
+                        Text("When enabled, matching event titles, organizers, and invited participant names may be sent as text context to remote note providers. This does not apply to local providers like Ollama, MLX, or localhost OpenAI-compatible endpoints.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+
+                        CalendarStatusView()
+                    }
                 }
 
                 if !settings.ignoredAppBundleIDs.isEmpty {
@@ -234,6 +271,31 @@ private struct GeneralSettingsTab: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
+
+                Section("Troubleshooting") {
+                    Toggle("Diagnostic logging", isOn: $settings.diagnosticLoggingEnabled)
+                        .font(.system(size: 12))
+
+                    Text("Keeps a small internal breadcrumb trail for session and batch lifecycle debugging. Use Export Diagnostics to share recent technical logs without exposing API keys.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    Button(diagnosticsExportInFlight ? "Exporting…" : "Export Diagnostics…") {
+                        exportDiagnostics()
+                    }
+                    .font(.system(size: 12))
+                    .disabled(diagnosticsExportInFlight)
+
+                    Text("Exports a plain-text bundle with recent unified logs, non-sensitive app settings, and any diagnostic breadcrumbs collected while the toggle was enabled.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    if let diagnosticsExportMessage {
+                        Text(diagnosticsExportMessage)
+                            .font(.system(size: 11))
+                            .foregroundStyle(diagnosticsExportHadError ? .red : .secondary)
+                    }
+                }
             }
             .formStyle(.grouped)
         }
@@ -264,6 +326,32 @@ private struct GeneralSettingsTab: View {
             settings.saveNotesFolderBookmark(from: url)
         }
     }
+
+    private func exportDiagnostics() {
+        diagnosticsExportInFlight = true
+        diagnosticsExportMessage = nil
+        diagnosticsExportHadError = false
+
+        Task { @MainActor in
+            defer { diagnosticsExportInFlight = false }
+            do {
+                let url = try await DiagnosticsSupport.exportInteractively(settings: settings)
+                diagnosticsExportMessage = "Saved diagnostics to \(url.lastPathComponent)."
+                diagnosticsExportHadError = false
+            } catch let error as DiagnosticsSupport.Error {
+                switch error {
+                case .cancelled:
+                    diagnosticsExportMessage = nil
+                default:
+                    diagnosticsExportMessage = error.localizedDescription
+                    diagnosticsExportHadError = true
+                }
+            } catch {
+                diagnosticsExportMessage = error.localizedDescription
+                diagnosticsExportHadError = true
+            }
+        }
+    }
 }
 
 // MARK: - Transcription Settings Tab
@@ -272,6 +360,9 @@ private struct TranscriptionSettingsTab: View {
     @Bindable var settings: AppSettings
     @State private var inputDevices: [(id: AudioDeviceID, name: String)] = []
     @State private var outputDevices: [(id: AudioDeviceID, name: String)] = []
+    @State private var isValidatingElevenLabsKey = false
+    @State private var elevenLabsValidation: APIKeyValidator.ValidationResult?
+    @State private var elevenLabsValidationTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -349,8 +440,25 @@ private struct TranscriptionSettingsTab: View {
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         case .elevenLabsScribe:
-                            SecureField("ElevenLabs API Key", text: $settings.elevenLabsApiKey)
-                                .font(.system(size: 12, design: .monospaced))
+                            HStack(spacing: 8) {
+                                SecureField("ElevenLabs API Key", text: $settings.elevenLabsApiKey)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .accessibilityIdentifier("settings.elevenLabsApiKeyField")
+
+                                apiKeyValidationIndicator(
+                                    isValidating: isValidatingElevenLabsKey,
+                                    result: elevenLabsValidation
+                                )
+                            }
+                            .onAppear {
+                                scheduleElevenLabsValidation(for: settings.elevenLabsApiKey)
+                            }
+                            .onChange(of: settings.elevenLabsApiKey) { _, newValue in
+                                scheduleElevenLabsValidation(for: newValue)
+                            }
+
+                            apiKeyValidationMessage(result: elevenLabsValidation)
+
                             Text("Audio segments are sent to ElevenLabs for transcription. Review their privacy policy at elevenlabs.io/privacy.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
@@ -378,7 +486,7 @@ private struct TranscriptionSettingsTab: View {
 
                     Toggle("Show live transcript", isOn: $settings.showLiveTranscript)
                         .font(.system(size: 12))
-                    Text("When disabled, the transcript panel is hidden during meetings. Transcription still runs in the background for suggestions and notes.")
+                    Text("When disabled, the transcript panel is hidden during meetings. Transcription still runs in the background for suggestions and notes. Cloud models only show finalized transcript segments after pauses; inline partial live text is unavailable.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
 
@@ -476,6 +584,90 @@ private struct TranscriptionSettingsTab: View {
                 settings.outputDeviceID = resolved
             }
         }
+        .onDisappear {
+            cancelElevenLabsValidation()
+        }
+    }
+
+    @ViewBuilder
+    private func apiKeyValidationIndicator(
+        isValidating: Bool,
+        result: APIKeyValidator.ValidationResult?
+    ) -> some View {
+        Group {
+            if isValidating {
+                ProgressView()
+                    .controlSize(.mini)
+            } else if let result {
+                switch result {
+                case .valid:
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                case .invalid:
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.red)
+                case .networkError:
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+            } else {
+                Color.clear
+            }
+        }
+        .font(.system(size: 14))
+        .frame(width: 18, height: 18)
+    }
+
+    @ViewBuilder
+    private func apiKeyValidationMessage(result: APIKeyValidator.ValidationResult?) -> some View {
+        if let result {
+            switch result {
+            case .valid:
+                Text("Connected to ElevenLabs")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.green)
+            case .invalid(let message):
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+            case .networkError(let message):
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func scheduleElevenLabsValidation(for key: String) {
+        elevenLabsValidationTask?.cancel()
+
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            elevenLabsValidation = nil
+            isValidatingElevenLabsKey = false
+            return
+        }
+
+        isValidatingElevenLabsKey = true
+        elevenLabsValidation = nil
+        elevenLabsValidationTask = Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+
+            let result = await APIKeyValidator.validateElevenLabsKey(trimmed)
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                elevenLabsValidation = result
+                isValidatingElevenLabsKey = false
+            }
+        }
+    }
+
+    private func cancelElevenLabsValidation() {
+        elevenLabsValidationTask?.cancel()
+        elevenLabsValidationTask = nil
+        isValidatingElevenLabsKey = false
     }
 }
 
@@ -484,10 +676,18 @@ private struct TranscriptionSettingsTab: View {
 private struct IntelligenceSettingsTab: View {
     @Bindable var settings: AppSettings
 
+    private var knowledgeBaseConfigured: Bool {
+        !settings.kbFolderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         ScrollView {
             Form {
-                Section("LLM Provider") {
+                Section("Notes generation") {
+                    Text("Choose the model OpenOats uses to generate meeting notes and other writing tasks. This is separate from knowledge-base retrieval.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
                     Picker("Provider", selection: $settings.llmProvider) {
                         ForEach(LLMProvider.allCases) { provider in
                             Text(provider.displayName).tag(provider)
@@ -526,34 +726,71 @@ private struct IntelligenceSettingsTab: View {
                     }
                 }
 
-                Section("Embedding Provider") {
-                    Picker("Provider", selection: $settings.embeddingProvider) {
-                        ForEach(EmbeddingProvider.allCases) { provider in
-                            Text(provider.displayName).tag(provider)
+                Section("Knowledge Base") {
+                    Text("Optional. Point this to a folder of reference material such as docs, notes, PRDs, or customer context. OpenOats reads this folder to find relevant background during meetings. It is separate from where your meeting notes are organized.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    HStack {
+                        Text(settings.kbFolderPath.isEmpty ? "Not set" : settings.kbFolderPath)
+                            .font(.system(size: 12))
+                            .foregroundStyle(settings.kbFolderPath.isEmpty ? .tertiary : .primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Spacer()
+
+                        if !settings.kbFolderPath.isEmpty {
+                            Button("Clear") {
+                                settings.kbFolderPath = ""
+                            }
+                            .font(.system(size: 12))
+                        }
+
+                        Button("Choose...") {
+                            chooseKBFolder()
                         }
                     }
-                    .font(.system(size: 12))
+                }
 
-                    switch settings.embeddingProvider {
-                    case .voyageAI:
-                        SecureField("API Key", text: $settings.voyageApiKey)
-                            .font(.system(size: 12, design: .monospaced))
-                    case .ollama:
-                        OllamaModelField(modelName: $settings.ollamaEmbedModel, baseURL: settings.ollamaBaseURL, placeholder: "e.g. nomic-embed-text")
+                Section("Knowledge base retrieval") {
+                    if knowledgeBaseConfigured {
+                        Text("Choose how OpenOats indexes and searches your Knowledge Base folder. This affects knowledge retrieval during meetings, not note generation. Indexed chunks and vectors are still cached locally on this Mac.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
 
-                        if settings.llmProvider != .ollama && settings.llmProvider != .mlx {
-                            TextField("Ollama URL", text: $settings.ollamaBaseURL, prompt: Text("http://localhost:11434"))
+                        Picker("Provider", selection: $settings.embeddingProvider) {
+                            ForEach(EmbeddingProvider.allCases) { provider in
+                                Text(provider.displayName).tag(provider)
+                            }
+                        }
+                        .font(.system(size: 12))
+
+                        switch settings.embeddingProvider {
+                        case .voyageAI:
+                            SecureField("Voyage AI Key", text: $settings.voyageApiKey)
+                                .font(.system(size: 12, design: .monospaced))
+                        case .ollama:
+                            OllamaModelField(modelName: $settings.ollamaEmbedModel, baseURL: settings.ollamaBaseURL, placeholder: "e.g. nomic-embed-text")
+
+                            if settings.llmProvider != .ollama && settings.llmProvider != .mlx {
+                                TextField("Ollama URL", text: $settings.ollamaBaseURL, prompt: Text("http://localhost:11434"))
+                                    .font(.system(size: 12, design: .monospaced))
+                            }
+                        case .openAICompatible:
+                            TextField("Endpoint URL", text: $settings.openAIEmbedBaseURL, prompt: Text("http://localhost:8080"))
+                                .font(.system(size: 12, design: .monospaced))
+
+                            SecureField("API Key (optional)", text: $settings.openAIEmbedApiKey)
+                                .font(.system(size: 12, design: .monospaced))
+
+                            TextField("Model", text: $settings.openAIEmbedModel, prompt: Text("e.g. text-embedding-3-small"))
                                 .font(.system(size: 12, design: .monospaced))
                         }
-                    case .openAICompatible:
-                        TextField("Endpoint URL", text: $settings.openAIEmbedBaseURL, prompt: Text("http://localhost:8080"))
-                            .font(.system(size: 12, design: .monospaced))
-
-                        SecureField("API Key (optional)", text: $settings.openAIEmbedApiKey)
-                            .font(.system(size: 12, design: .monospaced))
-
-                        TextField("Model", text: $settings.openAIEmbedModel, prompt: Text("e.g. text-embedding-3-small"))
-                            .font(.system(size: 12, design: .monospaced))
+                    } else {
+                        Text("Choose a Knowledge Base folder above to turn on retrieval settings. These controls are only used for Knowledge Base features such as relevant context and suggestions.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -593,33 +830,6 @@ private struct IntelligenceSettingsTab: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Section("Knowledge Base") {
-                    Text("Optional. Point this to a folder of notes, docs, or reference material (.md, .txt). During meetings, OpenOats searches this folder to surface relevant context and talking points.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-
-                    HStack {
-                        Text(settings.kbFolderPath.isEmpty ? "Not set" : settings.kbFolderPath)
-                            .font(.system(size: 12))
-                            .foregroundStyle(settings.kbFolderPath.isEmpty ? .tertiary : .primary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-
-                        Spacer()
-
-                        if !settings.kbFolderPath.isEmpty {
-                            Button("Clear") {
-                                settings.kbFolderPath = ""
-                            }
-                            .font(.system(size: 12))
-                        }
-
-                        Button("Choose...") {
-                            chooseKBFolder()
-                        }
-                    }
                 }
 
                 Section("Suggestions") {
@@ -879,10 +1089,65 @@ private struct TemplatesSettingsTab: View {
 
 private struct IntegrationsSettingsTab: View {
     @Bindable var settings: AppSettings
+    @State private var appleNotesAuthFailed = false
 
     var body: some View {
         ScrollView {
             Form {
+                Section("Apple Notes") {
+                    Toggle("Enable Apple Notes export", isOn: $settings.appleNotesEnabled)
+                        .font(.system(size: 12))
+                        .onChange(of: settings.appleNotesEnabled) { _, enabled in
+                            if enabled {
+                                Task {
+                                    let authorized = await AppleNotesService.requestAuthorization()
+                                    if !authorized {
+                                        settings.appleNotesEnabled = false
+                                        appleNotesAuthFailed = true
+                                    }
+                                }
+                            }
+                        }
+
+                    Text("Creates or updates a note in Apple Notes for each meeting. Use the \"Sync to Apple Notes\" button in the Notes view to push updated notes manually.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    if appleNotesAuthFailed {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                                .font(.system(size: 12))
+                            Text("Permission denied. Enable OpenOats under System Settings → Privacy & Security → Automation.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.red)
+                        }
+                    }
+
+                    if settings.appleNotesEnabled {
+                        Toggle("Include transcript", isOn: $settings.appleNotesIncludeTranscript)
+                            .font(.system(size: 12))
+
+                        Toggle("Auto-export transcript when meeting ends", isOn: $settings.appleNotesAutoExport)
+                            .font(.system(size: 12))
+                            .disabled(!settings.appleNotesIncludeTranscript)
+                        Text(settings.appleNotesIncludeTranscript
+                             ? "Exports the transcript to Apple Notes immediately when the meeting ends. Notes are generated later — use the Export button in the Notes view to sync them."
+                             : "Enable \"Include transcript\" to auto-export when a meeting ends.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+
+                        TextField("Account", text: $settings.appleNotesAccountName, prompt: Text("iCloud"))
+                            .font(.system(size: 12))
+                        Text("Enter the exact account name as it appears in the Notes sidebar (e.g. \"iCloud\" or your email address).")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+
+                        TextField("Folder name", text: $settings.appleNotesFolderName, prompt: Text("OpenOats"))
+                            .font(.system(size: 12))
+                    }
+                }
+
                 Section("Webhook") {
                     Toggle("Send webhook when meeting ends", isOn: $settings.webhookEnabled)
                         .font(.system(size: 12))
@@ -1046,6 +1311,193 @@ private struct GranolaImportButton: View {
             } catch {
                 importState = .failed(error.localizedDescription)
                 isImporting = false
+            }
+        }
+    }
+}
+
+// MARK: - Calendar Status View
+
+/// Displays the current Calendar authorization state, the currently matching event
+/// (if any), and a short list of upcoming events. Scoped to Settings visibility —
+/// does not change session title or finalization behavior.
+private struct CalendarStatusView: View {
+    @Environment(AppContainer.self) private var container
+
+    @State private var accessState: CalendarManager.AccessState = .notDetermined
+    @State private var currentEvent: CalendarEvent?
+    @State private var upcomingEvents: [CalendarEvent] = []
+    @State private var refreshTick: Int = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            statusRow
+
+            switch accessState {
+            case .authorized:
+                authorizedContent
+            case .denied:
+                deniedContent
+            case .notDetermined:
+                Text("OpenOats will ask for Calendar access shortly.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.top, 4)
+        .task(id: refreshTick) {
+            await refresh()
+            // Periodic refresh while the Settings window is open.
+            try? await Task.sleep(for: .seconds(30))
+            refreshTick &+= 1
+        }
+    }
+
+    // MARK: - Subviews
+
+    private var statusRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: statusIcon)
+                .font(.system(size: 12))
+                .foregroundStyle(statusColor)
+            Text(statusLabel)
+                .font(.system(size: 12, weight: .medium))
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var authorizedContent: some View {
+        if let event = currentEvent {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Currently matching")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Text(event.title)
+                    .font(.system(size: 12, weight: .medium))
+                Text(timeRange(for: event))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.accentColor.opacity(0.1))
+            )
+        }
+
+        if upcomingEvents.isEmpty {
+            Text(currentEvent == nil
+                ? "No upcoming events in the next 12 hours."
+                : "No further upcoming events in the next 12 hours.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Upcoming")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                ForEach(upcomingEvents) { event in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(startTime(for: event))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 58, alignment: .leading)
+                        Text(event.title)
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer()
+                    }
+                }
+            }
+        }
+    }
+
+    private var deniedContent: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Calendar access is denied. Grant access in System Settings for OpenOats to see your events.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Button("Open Privacy Settings…") {
+                openCalendarPrivacySettings()
+            }
+            .font(.system(size: 12))
+        }
+    }
+
+    // MARK: - Helpers
+
+    private var statusIcon: String {
+        switch accessState {
+        case .authorized: return "checkmark.circle.fill"
+        case .denied: return "exclamationmark.triangle.fill"
+        case .notDetermined: return "clock"
+        }
+    }
+
+    private var statusColor: Color {
+        switch accessState {
+        case .authorized: return .green
+        case .denied: return .orange
+        case .notDetermined: return .secondary
+        }
+    }
+
+    private var statusLabel: String {
+        switch accessState {
+        case .authorized: return "Calendar access authorized"
+        case .denied: return "Calendar access denied"
+        case .notDetermined: return "Calendar access not yet requested"
+        }
+    }
+
+    private func timeRange(for event: CalendarEvent) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return "\(formatter.string(from: event.startDate)) – \(formatter.string(from: event.endDate))"
+    }
+
+    private func startTime(for event: CalendarEvent) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter.string(from: event.startDate)
+    }
+
+    @MainActor
+    private func refresh() async {
+        guard let manager = container.calendarManager else {
+            accessState = .notDetermined
+            currentEvent = nil
+            upcomingEvents = []
+            return
+        }
+        accessState = manager.accessState
+        if manager.accessState == .authorized {
+            let now = Date()
+            let current = manager.currentEvent(at: now)
+            currentEvent = current
+            let allUpcoming = manager.upcomingEvents(from: now, limit: 6)
+            upcomingEvents = allUpcoming.filter { $0.id != current?.id }.prefix(5).map { $0 }
+        } else {
+            currentEvent = nil
+            upcomingEvents = []
+        }
+    }
+
+    private func openCalendarPrivacySettings() {
+        let urls = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy",
+        ]
+        for urlString in urls {
+            if let url = URL(string: urlString) {
+                if NSWorkspace.shared.open(url) { return }
             }
         }
     }

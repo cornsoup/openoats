@@ -2,6 +2,17 @@ import Foundation
 import Observation
 import CoreAudio
 import AppKit
+import UniformTypeIdentifiers
+
+struct RecordingHealthNotice: Equatable {
+    enum Severity: Equatable {
+        case warning
+        case error
+    }
+
+    let severity: Severity
+    let message: String
+}
 
 /// Published state for the live session, projected by ContentView.
 /// Declared as @Observable class so SwiftUI tracks each property individually,
@@ -11,7 +22,10 @@ final class LiveSessionState {
     var isRunning: Bool = false
     var sessionPhase: MeetingState = .idle
     var audioLevel: Float = 0
+    var recordingElapsedSeconds: Int = 0
     var liveTranscript: [Utterance] = []
+    var liveTranscriptNotice: String? = nil
+    var liveTranscriptEmptyStateMessage: String? = nil
     var volatileYouText: String = ""
     var volatileThemText: String = ""
     var suggestions: [Suggestion] = []
@@ -19,10 +33,12 @@ final class LiveSessionState {
     var batchStatus: BatchAudioTranscriber.Status = .idle
     var batchIsImporting: Bool = false
     var lastEndedSession: SessionIndex? = nil
+    var lastEndedSessionCanRetranscribe: Bool = false
     var lastSessionHasNotes: Bool = false
-    var kbIndexingProgress: String = ""
+    var kbIndexingStatus: KnowledgeBaseIndexingStatus = .idle
     var statusMessage: String? = nil
     var errorMessage: String? = nil
+    var matchedCalendarEvent: CalendarEvent? = nil
     var needsDownload: Bool = false
     var downloadProgress: Double? = nil
     var downloadDetail: DownloadProgressDetail? = nil
@@ -30,6 +46,8 @@ final class LiveSessionState {
     var modelDisplayName: String = ""
     var showLiveTranscript: Bool = true
     var isMicMuted: Bool = false
+    var isRecordingPaused: Bool = false
+    var recordingHealthNotice: RecordingHealthNotice? = nil
     /// The user's live scratchpad text for the active session.
     var scratchpadText: String = ""
     var liveSummariesByLevel: [Int: String] = [:]
@@ -46,13 +64,72 @@ final class LiveSessionState {
 @Observable
 @MainActor
 final class LiveSessionController {
+    enum ScratchpadAssetInsertion: Sendable {
+        case attachmentFile(URL)
+        case imageFile(URL)
+        case imageData(Data)
+    }
+
+    enum EmptySessionDiagnosticClassification: String, Equatable {
+        case noAudioDetected = "no_audio_detected"
+        case transcriptionProducedNoText = "transcription_produced_no_text"
+        case unclassified = "unclassified"
+    }
+
+    struct EmptySessionDiagnosticsEvent: Codable, Equatable {
+        let event: String
+        let sessionID: String
+        let transcriptionModel: String
+        let elapsedSeconds: Int
+        let utteranceCount: Int
+        let peakAudioLevel: Float
+        let micCapturedFrames: Bool
+        let systemCapturedFrames: Bool
+        let micCaptureError: String?
+        let classification: String
+        let retainedRecoveryAudio: Bool
+        let recoveryBatchAttempted: Bool
+        let recoveryResult: String
+        let finalUtteranceCount: Int?
+        let mergedIntoSessionID: String?
+        let failureMessage: String?
+    }
+
+    private struct PendingRecoveryDiagnostics: Equatable {
+        let sessionID: String
+        let transcriptionModel: String
+        let classification: EmptySessionDiagnosticClassification
+    }
+
+    struct AudioRetentionPlan: Equatable {
+        let shouldStartRecorder: Bool
+        let shouldRetainBatchAudio: Bool
+        let shouldExportRecording: Bool
+        let shouldRunRecoveryBatch: Bool
+    }
+
+    struct RecordingHealthInput: Equatable {
+        let elapsed: TimeInterval
+        let transcriptionModel: TranscriptionModel
+        let utteranceCount: Int
+        let peakAudioLevel: Float
+        let micHasCapturedFrames: Bool
+        let systemHasCapturedFrames: Bool
+        let micCaptureError: String?
+        let isMicMuted: Bool
+        let isRecordingPaused: Bool
+        let hasBlockingError: Bool
+    }
+
     private(set) var state = LiveSessionState()
 
     private let coordinator: AppCoordinator
     private let container: AppContainer
 
     private var downloadTask: Task<Void, Never>?
+    private var startPreflightTask: Task<Void, Never>?
     private var scratchpadSaveTask: Task<Void, Never>?
+    private var pendingInitialScratchpad: String?
 
     // Tracked-change sentinels
     private var observedUtteranceCount = 0
@@ -60,15 +137,19 @@ final class LiveSessionController {
     private var observedAudioLevel: Float = 0
     private var observedSuggestions: [Suggestion] = []
     private var observedIsGenerating = false
-    private var observedKBFolderPath = ""
+    private var observedKBFolderPath: String?
     private var observedNotesFolderPath = ""
-    private var observedVoyageApiKey = ""
+    private var observedMeetingTranscriptDateFolderFormat: MeetingTranscriptDateFolderFormat?
+    private var observedEmbeddingProvider: EmbeddingProvider?
+    private var observedVoyageApiKey: String?
     private var observedTranscriptionModel: TranscriptionModel = .parakeetV2
     private var observedInputDeviceID: AudioDeviceID = 0
     private var observedPendingExternalCommandID: UUID?
     /// Tracks the session ID we last handled a batch completion for,
     /// preventing the auto-dismiss → re-poll cycle from re-triggering the notification.
     private var lastNotifiedBatchSessionID: String?
+    private var observedPeakAudioLevelSinceStart: Float = 0
+    private var pendingRecoveryDiagnostics: PendingRecoveryDiagnostics?
 
     init(coordinator: AppCoordinator, container: AppContainer) {
         self.coordinator = coordinator
@@ -88,21 +169,82 @@ final class LiveSessionController {
     /// Polls at 250ms while recording for responsive UI, and at 2s while idle
     /// to minimize observation churn and SwiftUI re-render cycles.
     func runPollingLoop(settings: AppSettings) async {
-        refreshState(settings: settings)
-        synchronizeDerivedState(settings: settings)
+        syncProjectedState(settings: settings)
 
         while !Task.isCancelled {
             let isActive = coordinator.transcriptionEngine?.isRunning == true
                 || coordinator.batchStatus != .idle
+                || coordinator.knowledgeBase?.indexingStatus.needsFrequentPolling == true
             try? await Task.sleep(for: isActive ? .milliseconds(250) : .seconds(2))
 
             // Poll batch engine status (actor-isolated)
             if let engine = coordinator.batchAudioTranscriber {
                 let status = await engine.status
                 let importing = await engine.isImporting
+                let activeBatchSessionID = await engine.activeSessionID
                 if status != .idle || coordinator.batchStatus != .idle {
                     coordinator.batchStatus = status
                     coordinator.batchIsImporting = importing
+
+                    if let pendingRecoveryDiagnostics {
+                        if let activeBatchSessionID,
+                           activeBatchSessionID != pendingRecoveryDiagnostics.sessionID {
+                            self.pendingRecoveryDiagnostics = nil
+                            coordinator.pendingRecoverySessionID = nil
+                        }
+
+                        switch status {
+                        case .completed(let sid) where sid == pendingRecoveryDiagnostics.sessionID:
+                            let recoveredIndex = await coordinator.sessionRepository.loadSession(id: sid).index
+                            recordEmptySessionDiagnostics(
+                                EmptySessionDiagnosticsEvent(
+                                    event: "live_empty_session_recovery",
+                                    sessionID: sid,
+                                    transcriptionModel: pendingRecoveryDiagnostics.transcriptionModel,
+                                    elapsedSeconds: 0,
+                                    utteranceCount: 0,
+                                    peakAudioLevel: 0,
+                                    micCapturedFrames: false,
+                                    systemCapturedFrames: false,
+                                    micCaptureError: nil,
+                                    classification: pendingRecoveryDiagnostics.classification.rawValue,
+                                    retainedRecoveryAudio: true,
+                                    recoveryBatchAttempted: true,
+                                    recoveryResult: recoveredIndex.utteranceCount > 0 ? "completed" : "completed_empty",
+                                    finalUtteranceCount: recoveredIndex.utteranceCount,
+                                    mergedIntoSessionID: nil,
+                                    failureMessage: nil
+                                )
+                            )
+                            self.pendingRecoveryDiagnostics = nil
+                            coordinator.pendingRecoverySessionID = nil
+                        case .failed(let message):
+                            recordEmptySessionDiagnostics(
+                                EmptySessionDiagnosticsEvent(
+                                    event: "live_empty_session_recovery",
+                                    sessionID: pendingRecoveryDiagnostics.sessionID,
+                                    transcriptionModel: pendingRecoveryDiagnostics.transcriptionModel,
+                                    elapsedSeconds: 0,
+                                    utteranceCount: 0,
+                                    peakAudioLevel: 0,
+                                    micCapturedFrames: false,
+                                    systemCapturedFrames: false,
+                                    micCaptureError: nil,
+                                    classification: pendingRecoveryDiagnostics.classification.rawValue,
+                                    retainedRecoveryAudio: true,
+                                    recoveryBatchAttempted: true,
+                                    recoveryResult: "failed",
+                                    finalUtteranceCount: nil,
+                                    mergedIntoSessionID: nil,
+                                    failureMessage: message
+                                )
+                            )
+                            self.pendingRecoveryDiagnostics = nil
+                            coordinator.pendingRecoverySessionID = nil
+                        default:
+                            break
+                        }
+                    }
 
                     if case .completed(let sid) = status, lastNotifiedBatchSessionID != sid {
                         lastNotifiedBatchSessionID = sid
@@ -110,6 +252,11 @@ final class LiveSessionController {
                             await notifService.postBatchCompleted(sessionID: sid)
                         }
                         await coordinator.loadHistory()
+                        if coordinator.lastEndedSession?.id == sid {
+                            coordinator.lastEndedSession = await coordinator.sessionRepository.loadSession(id: sid).index
+                            let canRetranscribe = await coordinator.sessionRepository.hasRetainedBatchAudio(sessionID: sid)
+                            set(\.lastEndedSessionCanRetranscribe, canRetranscribe)
+                        }
 
                         Task { @MainActor in
                             try? await Task.sleep(for: .seconds(3))
@@ -121,35 +268,70 @@ final class LiveSessionController {
                 }
             }
 
-            refreshState(settings: settings)
-            synchronizeDerivedState(settings: settings)
+            syncProjectedState(settings: settings)
         }
+    }
+
+    func syncProjectedState(settings: AppSettings) {
+        refreshState(settings: settings)
+        synchronizeDerivedState(settings: settings)
     }
 
     // MARK: - Session Actions
 
-    func startSession(settings: AppSettings) {
+    func startSession(
+        settings: AppSettings,
+        calendarEventOverride: CalendarEvent? = nil,
+        initialScratchpad: String? = nil
+    ) {
+        guard !state.isRunning, startPreflightTask == nil else { return }
+        container.ensureMeetingServicesInitialized(settings: settings, coordinator: coordinator)
         coordinator.suggestionEngine?.clear()
         coordinator.sidecastEngine?.clear()
         coordinator.liveSummaryEngine?.clear()
-        let calEvent = settings.calendarIntegrationEnabled
+        let calEvent = calendarEventOverride ?? (settings.calendarIntegrationEnabled
             ? container.calendarManager?.currentEvent()
-            : nil
+            : nil)
+        DiagnosticsSupport.record(
+            category: "meeting",
+            message: "Start requested (calendarEvent=\(calEvent == nil ? "no" : "yes"))"
+        )
+        pendingInitialScratchpad = initialScratchpad?.trimmingCharacters(in: .newlines)
         let metadata = MeetingMetadata.manual(calendarEvent: calEvent)
+
+        if settings.transcriptionModel.isCloud {
+            state.errorMessage = nil
+            state.statusMessage = "Validating \(settings.transcriptionModel.displayName)..."
+            startPreflightTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.startPreflightTask = nil }
+                let issue = await self.coordinator.transcriptionEngine?.preflightStart(
+                    transcriptionModel: settings.transcriptionModel
+                )
+                self.syncProjectedState(settings: settings)
+                guard issue == nil else { return }
+                self.coordinator.handle(.userStarted(metadata), settings: settings)
+            }
+            return
+        }
+
         coordinator.handle(.userStarted(metadata), settings: settings)
     }
 
     func stopSession(settings: AppSettings) {
+        DiagnosticsSupport.record(category: "meeting", message: "Stop requested")
         coordinator.handle(.userStopped, settings: settings)
     }
 
     func confirmDownloadAndStart(settings: AppSettings) {
+        container.ensureRecordingServicesInitialized(settings: settings, coordinator: coordinator)
         coordinator.transcriptionEngine?.downloadConfirmed = true
         startSession(settings: settings)
     }
 
     func downloadModelOnly(settings: AppSettings) {
         guard downloadTask == nil else { return }
+        container.ensureRecordingServicesInitialized(settings: settings, coordinator: coordinator)
         downloadTask = Task {
             await coordinator.transcriptionEngine?.downloadModelOnly(
                 transcriptionModel: settings.transcriptionModel
@@ -163,6 +345,11 @@ final class LiveSessionController {
         engine.isMicMuted.toggle()
     }
 
+    func toggleRecordingPause() {
+        guard let engine = coordinator.transcriptionEngine, engine.isRunning else { return }
+        engine.isRecordingPaused.toggle()
+    }
+
     /// Update the scratchpad text and schedule a debounced save.
     func updateScratchpad(_ text: String) {
         state.scratchpadText = text
@@ -174,14 +361,86 @@ final class LiveSessionController {
         }
     }
 
+    func insertScratchpadImage(_ imageData: Data) {
+        insertScratchpadAssets([.imageData(imageData)])
+    }
+
+    func insertScratchpadAssets(_ insertions: [ScratchpadAssetInsertion]) {
+        guard let sessionID = _currentSessionID, !insertions.isEmpty else { return }
+
+        Task {
+            var updatedText = state.scratchpadText
+            var insertedAnyAssets = false
+
+            for insertion in insertions {
+                switch insertion {
+                case .attachmentFile(let sourceURL):
+                    guard let attachment = await coordinator.sessionRepository.importAttachment(
+                        sessionID: sessionID,
+                        sourceURL: sourceURL
+                    ) else {
+                        continue
+                    }
+                    updatedText = Self.appendingMarkdownBlock(
+                        Self.markdownLink(for: attachment),
+                        to: updatedText
+                    )
+                    insertedAnyAssets = true
+
+                case .imageFile(let fileURL):
+                    guard let normalizedImageData = Self.normalizedPNGImageData(fromFileURL: fileURL) else {
+                        continue
+                    }
+                    let filename = await coordinator.sessionRepository.saveImage(
+                        sessionID: sessionID,
+                        imageData: normalizedImageData
+                    )
+                    updatedText = Self.appendingMarkdownBlock(
+                        "![](images/\(filename))",
+                        to: updatedText
+                    )
+                    insertedAnyAssets = true
+
+                case .imageData(let imageData):
+                    guard let normalizedImageData = Self.normalizedPNGImageData(from: imageData) else {
+                        continue
+                    }
+                    let filename = await coordinator.sessionRepository.saveImage(
+                        sessionID: sessionID,
+                        imageData: normalizedImageData
+                    )
+                    updatedText = Self.appendingMarkdownBlock(
+                        "![](images/\(filename))",
+                        to: updatedText
+                    )
+                    insertedAnyAssets = true
+                }
+            }
+
+            guard insertedAnyAssets else { return }
+
+            state.scratchpadText = updatedText
+            scratchpadSaveTask?.cancel()
+            await coordinator.sessionRepository.saveScratchpad(sessionID: sessionID, text: updatedText)
+        }
+    }
+
     // MARK: - KB Indexing
 
     func indexKBIfNeeded(settings: AppSettings) {
         guard let url = settings.kbFolderURL, let kb = coordinator.knowledgeBase else { return }
         Task {
+            // TODO: Coalesce repeated startup/settings-triggered reindex requests into a
+            // single in-flight task. Today ContentView startup, kbFolderPath changes, and
+            // Voyage key changes can all arrive close together and redo the same cold-start scan.
             kb.clear()
             await kb.index(folderURL: url)
         }
+    }
+
+    func loadKBCacheIfAvailable(settings: AppSettings) {
+        guard let url = settings.kbFolderURL, let kb = coordinator.knowledgeBase else { return }
+        _ = kb.loadCachedStateIfAvailable(folderURL: url)
     }
 
     // MARK: - External Commands
@@ -191,11 +450,16 @@ final class LiveSessionController {
         let handled: Bool
 
         switch request.command {
-        case .startSession:
+        case .startSession(let calendarEvent, let scratchpadSeed):
+            container.ensureMeetingServicesInitialized(settings: settings, coordinator: coordinator)
             guard coordinator.transcriptionEngine != nil,
                   (coordinator.suggestionEngine != nil || coordinator.sidecastEngine != nil) else { return }
             if !state.isRunning {
-                startSession(settings: settings)
+                startSession(
+                    settings: settings,
+                    calendarEventOverride: calendarEvent,
+                    initialScratchpad: scratchpadSeed
+                )
             }
             handled = true
         case .stopSession:
@@ -258,6 +522,52 @@ final class LiveSessionController {
     }
     private var _currentSessionID: String?
 
+    private static func appendingMarkdownBlock(_ block: String, to existing: String) -> String {
+        guard !existing.isEmpty else { return block }
+        return existing + "\n\n" + block
+    }
+
+    private static func markdownLink(for attachment: NoteAttachment) -> String {
+        let label = attachment.displayName
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "[", with: "\\[")
+            .replacingOccurrences(of: "]", with: "\\]")
+        return "[\(label)](\(attachment.relativePath))"
+    }
+
+    static func isImageFile(url: URL) -> Bool {
+        if let resourceValues = try? url.resourceValues(forKeys: [.contentTypeKey]),
+           let contentType = resourceValues.contentType {
+            return contentType.conforms(to: .image)
+        }
+        if let inferredType = UTType(filenameExtension: url.pathExtension) {
+            return inferredType.conforms(to: .image)
+        }
+        return false
+    }
+
+    private static func normalizedPNGImageData(fromFileURL fileURL: URL) -> Data? {
+        guard let image = NSImage(contentsOf: fileURL) else { return nil }
+        return normalizedPNGImageData(from: image)
+    }
+
+    private static func normalizedPNGImageData(from imageData: Data) -> Data? {
+        guard let image = NSImage(data: imageData),
+              let tiffRepresentation = image.tiffRepresentation,
+              let bitmapRepresentation = NSBitmapImageRep(data: tiffRepresentation) else {
+            return nil
+        }
+        return bitmapRepresentation.representation(using: .png, properties: [:])
+    }
+
+    private static func normalizedPNGImageData(from image: NSImage) -> Data? {
+        guard let tiffRepresentation = image.tiffRepresentation,
+              let bitmapRepresentation = NSBitmapImageRep(data: tiffRepresentation) else {
+            return nil
+        }
+        return bitmapRepresentation.representation(using: .png, properties: [:])
+    }
+
     private func handleNewUtterances(startingAt startIndex: Int, settings: AppSettings) {
         let utterances = coordinator.transcriptStore.utterances
         guard startIndex < utterances.count else { return }
@@ -275,6 +585,7 @@ final class LiveSessionController {
         }
 
         coordinator.lastEndedSession = nil
+        coordinator.pendingRecoverySessionID = nil
         coordinator.lastStorageError = nil
         coordinator.transcriptStore.clear()
 
@@ -295,28 +606,55 @@ final class LiveSessionController {
 
         // Configure notes folder for mirroring (prefer security-scoped bookmark)
         if let settings {
+            let dateSubfolderFormat = Self.dateSubfolderFormat(for: settings)
             if let resolvedURL = settings.resolveNotesFolderBookmark() {
-                await coordinator.sessionRepository.setNotesFolderPath(resolvedURL, securityScoped: true)
+                await coordinator.sessionRepository.setNotesFolderPath(
+                    resolvedURL,
+                    securityScoped: true,
+                    dateSubfolderFormat: dateSubfolderFormat
+                )
                 coordinator.audioRecorder?.updateDirectory(resolvedURL, securityScoped: true)
             } else {
                 let notesURL = URL(fileURLWithPath: settings.notesFolderPath)
-                await coordinator.sessionRepository.setNotesFolderPath(notesURL)
+                await coordinator.sessionRepository.setNotesFolderPath(
+                    notesURL,
+                    dateSubfolderFormat: dateSubfolderFormat
+                )
                 coordinator.audioRecorder?.updateDirectory(notesURL)
             }
         }
 
         let templateID = coordinator.selectedTemplate?.id
-        let handle = await coordinator.sessionRepository.startSession(
-            config: SessionStartConfig(
-                templateID: templateID,
-                templateSnapshot: coordinator.sessionTemplateSnapshot
-            )
+        let startConfig = SessionStartConfig(
+            templateID: templateID,
+            templateSnapshot: coordinator.sessionTemplateSnapshot,
+            title: metadata.title ?? metadata.calendarEvent?.title,
+            calendarEvent: metadata.calendarEvent
         )
+        let handle: SessionHandle
+        let reusedAbandonedRow: Bool
+        if let resumed = await coordinator.sessionRepository.resumeAbandonedSession(config: startConfig) {
+            handle = resumed
+            reusedAbandonedRow = true
+        } else {
+            handle = await coordinator.sessionRepository.startSession(config: startConfig)
+            reusedAbandonedRow = false
+        }
         _currentSessionID = handle.sessionID
-        state.scratchpadText = ""
+        DiagnosticsSupport.record(
+            category: "meeting",
+            message: "\(reusedAbandonedRow ? "Reused" : "Started") session \(handle.sessionID) model=\(settings?.transcriptionModel.rawValue ?? "unknown")"
+        )
+        let initialScratchpad = pendingInitialScratchpad?.trimmingCharacters(in: .whitespacesAndNewlines)
+        pendingInitialScratchpad = nil
+        state.scratchpadText = initialScratchpad ?? ""
+        if let initialScratchpad, !initialScratchpad.isEmpty {
+            await coordinator.sessionRepository.saveScratchpad(sessionID: handle.sessionID, text: initialScratchpad)
+        }
 
         if let settings {
-            if settings.saveAudioRecording || settings.enableBatchRetranscription {
+            let audioRetentionPlan = Self.audioRetentionPlan(settings: settings, utteranceCount: nil)
+            if audioRetentionPlan.shouldStartRecorder {
                 coordinator.audioRecorder?.startSession()
                 coordinator.transcriptionEngine?.audioRecorder = coordinator.audioRecorder
             } else {
@@ -326,7 +664,8 @@ final class LiveSessionController {
             await coordinator.transcriptionEngine?.start(
                 locale: settings.locale,
                 inputDeviceID: settings.inputDeviceID,
-                transcriptionModel: settings.transcriptionModel
+                transcriptionModel: settings.transcriptionModel,
+                sessionID: handle.sessionID
             )
         }
     }
@@ -337,6 +676,10 @@ final class LiveSessionController {
         if let sessionID = _currentSessionID, !state.scratchpadText.isEmpty {
             await coordinator.sessionRepository.saveScratchpad(sessionID: sessionID, text: state.scratchpadText)
         }
+
+        let captureHealthAtStop = coordinator.transcriptionEngine?.captureHealthSnapshot
+        let wasMicMutedAtStop = state.isMicMuted
+        let peakAudioLevelAtStop = observedPeakAudioLevelSinceStart
 
         // 1. Drain audio buffers
         await coordinator.transcriptionEngine?.finalize()
@@ -360,21 +703,36 @@ final class LiveSessionController {
         }
         let utterancesSnapshot = coordinator.transcriptStore.utterances
         let utteranceCount = utterancesSnapshot.count
-        let title = coordinator.transcriptStore.conversationState.currentTopic.isEmpty
-            ? nil : coordinator.transcriptStore.conversationState.currentTopic
-
-        let meetingAppName: String?
+        let endingMetadata: MeetingMetadata?
         if case .ending(let metadata) = coordinator.state {
-            meetingAppName = metadata.detectionContext?.meetingApp?.name
+            endingMetadata = metadata
         } else {
-            meetingAppName = nil
+            endingMetadata = nil
         }
+        let metadataTitle = endingMetadata?.title ?? endingMetadata?.calendarEvent?.title
+        let title = coordinator.transcriptStore.conversationState.currentTopic.isEmpty
+            ? metadataTitle : coordinator.transcriptStore.conversationState.currentTopic
+        let meetingAppName = endingMetadata?.detectionContext?.meetingApp?.name
 
         let engineName = settings?.transcriptionModel.rawValue
         let transcriptionLanguage: String? = {
             guard let locale = settings?.transcriptionLocale, !locale.isEmpty else { return nil }
             return locale
         }()
+        let recordingHealthInput = RecordingHealthInput(
+            elapsed: max(0, Date().timeIntervalSince(endingMetadata?.startedAt ?? Date())),
+            transcriptionModel: settings?.transcriptionModel ?? .parakeetV3,
+            utteranceCount: utteranceCount,
+            peakAudioLevel: peakAudioLevelAtStop,
+            micHasCapturedFrames: captureHealthAtStop?.micHasCapturedFrames ?? false,
+            systemHasCapturedFrames: captureHealthAtStop?.systemHasCapturedFrames ?? false,
+            micCaptureError: captureHealthAtStop?.micCaptureError,
+            isMicMuted: wasMicMutedAtStop,
+            isRecordingPaused: coordinator.transcriptionEngine?.isRecordingPaused ?? false,
+            hasBlockingError: false
+        )
+        let transcriptIssue = Self.transcriptIssue(for: recordingHealthInput)
+        let emptySessionClassification = Self.emptySessionDiagnosticClassification(for: recordingHealthInput)
 
         // 4. Finalize: closes file handle, backfills cleaned text, writes session.json
         await coordinator.sessionRepository.finalizeSession(
@@ -387,14 +745,22 @@ final class LiveSessionController {
                 meetingApp: meetingAppName,
                 engine: engineName,
                 templateSnapshot: coordinator.sessionTemplateSnapshot,
-                utterances: utterancesSnapshot
+                utterances: utterancesSnapshot,
+                calendarEvent: endingMetadata?.calendarEvent,
+                transcriptIssue: transcriptIssue
             )
         )
+
+        if let settings,
+           let event = endingMetadata?.calendarEvent,
+           let folderPath = settings.meetingFamilyPreferences(for: event)?.folderPath {
+            await coordinator.sessionRepository.updateSessionFolder(sessionID: sessionID, folderPath: folderPath)
+        }
 
         // 5. Build index for UI state
         let index = SessionIndex(
             id: sessionID,
-            startedAt: utterancesSnapshot.first?.timestamp ?? Date(),
+            startedAt: utterancesSnapshot.first?.timestamp ?? endingMetadata?.startedAt ?? Date(),
             endedAt: Date(),
             templateSnapshot: coordinator.sessionTemplateSnapshot,
             title: title,
@@ -402,7 +768,8 @@ final class LiveSessionController {
             hasNotes: false,
             language: transcriptionLanguage,
             meetingApp: meetingAppName,
-            engine: engineName
+            engine: engineName,
+            transcriptIssue: transcriptIssue
         )
 
         // 5b. Fire webhook if configured
@@ -414,10 +781,23 @@ final class LiveSessionController {
             )
         }
 
+        // 5c. Export to Apple Notes if configured
+        if let settings {
+            AppleNotesService.exportIfEnabled(
+                settings: settings,
+                sessionIndex: index,
+                utterances: utterancesSnapshot
+            )
+        }
+
         // 6. Handle audio recording
+        var retainedBatchAudio = false
+        var forcedRecoveryBatch = false
         if let settings, let recorder = coordinator.audioRecorder {
-            let wantsBatch = settings.enableBatchRetranscription
-            let wantsExport = settings.saveAudioRecording
+            let audioRetentionPlan = Self.audioRetentionPlan(settings: settings, utteranceCount: utteranceCount)
+            let wantsBatch = audioRetentionPlan.shouldRetainBatchAudio
+            let wantsExport = audioRetentionPlan.shouldExportRecording
+            forcedRecoveryBatch = audioRetentionPlan.shouldRunRecoveryBatch
 
             if wantsBatch && wantsExport {
                 let tempURLs = recorder.tempFileURLs()
@@ -444,6 +824,7 @@ final class LiveSessionController {
                     copiedSys = nil
                 }
 
+                retainedBatchAudio = copiedMic != nil || copiedSys != nil
                 await coordinator.sessionRepository.stashAudioForBatch(
                     sessionID: sessionID,
                     micURL: copiedMic,
@@ -452,13 +833,15 @@ final class LiveSessionController {
                         micStartDate: anchorsData.micStartDate,
                         sysStartDate: anchorsData.sysStartDate,
                         micAnchors: anchorsData.micAnchors,
-                        sysAnchors: anchorsData.sysAnchors
+                        sysAnchors: anchorsData.sysAnchors,
+                        sysEffectiveSampleRate: anchorsData.sysEffectiveSampleRate
                     )
                 )
 
                 await recorder.finalizeRecording()
             } else if wantsBatch {
                 let sealed = recorder.sealForBatch()
+                retainedBatchAudio = sealed.mic != nil || sealed.sys != nil
                 await coordinator.sessionRepository.stashAudioForBatch(
                     sessionID: sessionID,
                     micURL: sealed.mic,
@@ -467,22 +850,107 @@ final class LiveSessionController {
                         micStartDate: sealed.micStartDate,
                         sysStartDate: sealed.sysStartDate,
                         micAnchors: sealed.micAnchors,
-                        sysAnchors: sealed.sysAnchors
+                        sysAnchors: sealed.sysAnchors,
+                        sysEffectiveSampleRate: sealed.sysEffectiveSampleRate
                     )
                 )
             } else if wantsExport {
                 await recorder.finalizeRecording()
+            } else {
+                recorder.discardRecording()
             }
         }
 
-        // 7. Update UI state + refresh history
-        coordinator.lastEndedSession = index
+        // 7. Collapse obviously empty duplicate sessions back into the real meeting session.
+        var effectiveIndex = index
+        var shouldRunBatchRetranscription = settings?.enableBatchRetranscription == true
+        var mergedSessionID: String?
+        if forcedRecoveryBatch {
+            if retainedBatchAudio {
+                shouldRunBatchRetranscription = true
+                DiagnosticsSupport.record(
+                    category: "meeting",
+                    message: "Escalating empty cloud session \(sessionID) to batch recovery"
+                )
+            } else {
+                DiagnosticsSupport.record(
+                    category: "meeting",
+                    message: "Cloud session \(sessionID) ended empty with no recovery audio"
+                )
+            }
+        }
+        if utteranceCount == 0,
+           let merged = await coordinator.sessionRepository.reconcileGhostSession(sessionID: sessionID) {
+            mergedSessionID = merged
+            effectiveIndex = await coordinator.sessionRepository.loadSession(id: merged).index
+            shouldRunBatchRetranscription = false
+            DiagnosticsSupport.record(
+                category: "meeting",
+                message: "Collapsed empty duplicate session \(sessionID) into \(merged)"
+            )
+        }
+
+        let queuedRecoveryBatch = shouldRunBatchRetranscription && coordinator.batchAudioTranscriber != nil
+        if utteranceCount == 0, let classification = emptySessionClassification {
+            let recoveryResult: String
+            if mergedSessionID != nil {
+                recoveryResult = "collapsed_into_existing_session"
+            } else if queuedRecoveryBatch {
+                recoveryResult = "queued"
+            } else if forcedRecoveryBatch && !retainedBatchAudio {
+                recoveryResult = "unavailable_no_retained_audio"
+            } else {
+                recoveryResult = "not_attempted"
+            }
+            recordEmptySessionDiagnostics(
+                EmptySessionDiagnosticsEvent(
+                    event: "live_empty_session_finalized",
+                    sessionID: sessionID,
+                    transcriptionModel: recordingHealthInput.transcriptionModel.rawValue,
+                    elapsedSeconds: Int(recordingHealthInput.elapsed.rounded()),
+                    utteranceCount: recordingHealthInput.utteranceCount,
+                    peakAudioLevel: recordingHealthInput.peakAudioLevel,
+                    micCapturedFrames: recordingHealthInput.micHasCapturedFrames,
+                    systemCapturedFrames: recordingHealthInput.systemHasCapturedFrames,
+                    micCaptureError: recordingHealthInput.micCaptureError,
+                    classification: classification.rawValue,
+                    retainedRecoveryAudio: retainedBatchAudio,
+                    recoveryBatchAttempted: queuedRecoveryBatch,
+                    recoveryResult: recoveryResult,
+                    finalUtteranceCount: nil,
+                    mergedIntoSessionID: mergedSessionID,
+                    failureMessage: nil
+                )
+            )
+            if queuedRecoveryBatch {
+                pendingRecoveryDiagnostics = PendingRecoveryDiagnostics(
+                    sessionID: sessionID,
+                    transcriptionModel: recordingHealthInput.transcriptionModel.rawValue,
+                    classification: classification
+                )
+                coordinator.pendingRecoverySessionID = sessionID
+            } else {
+                pendingRecoveryDiagnostics = nil
+                coordinator.pendingRecoverySessionID = nil
+            }
+        } else {
+            pendingRecoveryDiagnostics = nil
+            coordinator.pendingRecoverySessionID = nil
+        }
+
+        // 8. Update UI state + refresh history
+        coordinator.lastEndedSession = effectiveIndex
+        set(\.lastEndedSessionCanRetranscribe, retainedBatchAudio)
         coordinator.sessionTemplateSnapshot = nil
         _currentSessionID = nil
+        DiagnosticsSupport.record(
+            category: "meeting",
+            message: "Finalized session \(effectiveIndex.id) utterances=\(utteranceCount) batch=\(shouldRunBatchRetranscription ? "on" : "off")"
+        )
         await coordinator.loadHistory()
 
-        // 8. Kick off batch transcription if enabled
-        if let settings, settings.enableBatchRetranscription, let batchAudioTranscriber = coordinator.batchAudioTranscriber {
+        // 9. Kick off batch transcription if enabled
+        if let settings, shouldRunBatchRetranscription, let batchAudioTranscriber = coordinator.batchAudioTranscriber {
             let batchSessionID = sessionID
             let batchModel = settings.batchTranscriptionModel
             let batchLocale = settings.locale
@@ -504,10 +972,175 @@ final class LiveSessionController {
         }
     }
 
+    static func audioRetentionPlan(settings: AppSettings, utteranceCount: Int?) -> AudioRetentionPlan {
+        let shouldRunRecoveryBatch = settings.transcriptionModel.isCloud && utteranceCount == 0
+        let shouldRetainBatchAudio = settings.enableBatchRetranscription || shouldRunRecoveryBatch
+        let shouldExportRecording = settings.saveAudioRecording
+        let shouldStartRecorder = shouldExportRecording || shouldRetainBatchAudio || settings.transcriptionModel.isCloud
+        return AudioRetentionPlan(
+            shouldStartRecorder: shouldStartRecorder,
+            shouldRetainBatchAudio: shouldRetainBatchAudio,
+            shouldExportRecording: shouldExportRecording,
+            shouldRunRecoveryBatch: shouldRunRecoveryBatch
+        )
+    }
+
+    private static func dateSubfolderFormat(for settings: AppSettings) -> MeetingTranscriptDateFolderFormat? {
+        settings.saveMeetingTranscriptsInDateSubfolders ? settings.meetingTranscriptDateFolderFormat : nil
+    }
+
+    static func transcriptIssue(for input: RecordingHealthInput) -> SessionTranscriptIssue? {
+        guard input.utteranceCount == 0 else { return nil }
+
+        if let micCaptureError = input.micCaptureError, !micCaptureError.isEmpty {
+            return .noAudioDetected
+        }
+
+        if input.elapsed >= 5,
+           !input.systemHasCapturedFrames,
+           (!input.isMicMuted && !input.micHasCapturedFrames) {
+            return .noAudioDetected
+        }
+
+        if input.peakAudioLevel >= 0.04,
+           input.micHasCapturedFrames || input.systemHasCapturedFrames {
+            return .transcriptionProducedNoText
+        }
+
+        return nil
+    }
+
+    static func recordingHealthNotice(for input: RecordingHealthInput) -> RecordingHealthNotice? {
+        guard !input.hasBlockingError else { return nil }
+        guard !input.isRecordingPaused else { return nil }
+
+        if let micCaptureError = input.micCaptureError, !micCaptureError.isEmpty {
+            return RecordingHealthNotice(severity: .error, message: micCaptureError)
+        }
+
+        if input.elapsed >= 5 {
+            if !input.systemHasCapturedFrames && (!input.isMicMuted && !input.micHasCapturedFrames) {
+                return RecordingHealthNotice(
+                    severity: .warning,
+                    message: "No microphone or system audio detected. Check your input and output device settings."
+                )
+            }
+            if !input.systemHasCapturedFrames {
+                return RecordingHealthNotice(
+                    severity: .warning,
+                    message: "No system audio detected. Check the selected speaker/output device."
+                )
+            }
+            if !input.isMicMuted && !input.micHasCapturedFrames {
+                return RecordingHealthNotice(
+                    severity: .warning,
+                    message: "No microphone audio detected. Check the selected microphone."
+                )
+            }
+        }
+
+        if input.elapsed >= 20,
+           input.utteranceCount == 0,
+           input.peakAudioLevel >= 0.04,
+           input.micHasCapturedFrames || input.systemHasCapturedFrames {
+            let message: String
+            if input.transcriptionModel.isCloud {
+                message = "Capturing audio, but live transcription is not producing text. Recovery batch transcription will run after you stop."
+            } else {
+                message = "Capturing audio, but live transcription is not producing text."
+            }
+            return RecordingHealthNotice(severity: .warning, message: message)
+        }
+
+        return nil
+    }
+
+    static func emptySessionDiagnosticClassification(for input: RecordingHealthInput) -> EmptySessionDiagnosticClassification? {
+        guard input.utteranceCount == 0 else { return nil }
+
+        if let micCaptureError = input.micCaptureError, !micCaptureError.isEmpty {
+            return .noAudioDetected
+        }
+
+        if input.elapsed >= 5,
+           !input.systemHasCapturedFrames,
+           (!input.isMicMuted && !input.micHasCapturedFrames) {
+            return .noAudioDetected
+        }
+
+        if input.peakAudioLevel >= 0.04,
+           input.micHasCapturedFrames || input.systemHasCapturedFrames {
+            return .transcriptionProducedNoText
+        }
+
+        return .unclassified
+    }
+
+    static func emptySessionDiagnosticsMessage(for event: EmptySessionDiagnosticsEvent) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        if let data = try? encoder.encode(event),
+           let string = String(data: data, encoding: .utf8) {
+            return string
+        }
+        return "event=\(event.event) session_id=\(event.sessionID) classification=\(event.classification)"
+    }
+
+    static func liveTranscriptNotice(
+        for model: TranscriptionModel,
+        issue: CloudTranscriptCopy.Presentation? = nil,
+        isProcessing: Bool = false
+    ) -> String? {
+        if let issue {
+            return issue.title
+        }
+        if isProcessing {
+            return CloudTranscriptCopy.processingChunk.title
+        }
+        return CloudTranscriptCopy.steadyStateNotice(for: model)
+    }
+
+    static func liveTranscriptEmptyStateMessage(
+        for model: TranscriptionModel,
+        issue: CloudTranscriptCopy.Presentation? = nil,
+        isProcessing: Bool = false
+    ) -> String? {
+        if let issue {
+            return issue.detail
+        }
+        if isProcessing {
+            return CloudTranscriptCopy.processingChunk.detail
+        }
+        return CloudTranscriptCopy.waitingMessage(for: model)
+    }
+
+    static func recordingElapsedSeconds(for state: MeetingState) -> Int {
+        let startedAt: Date?
+        switch state {
+        case .recording(let metadata), .ending(let metadata):
+            startedAt = metadata.startedAt
+        case .idle:
+            startedAt = nil
+        }
+
+        guard let startedAt else { return 0 }
+        return max(0, Int(Date().timeIntervalSince(startedAt)))
+    }
+
+    private func recordEmptySessionDiagnostics(_ event: EmptySessionDiagnosticsEvent) {
+        let message = Self.emptySessionDiagnosticsMessage(for: event)
+        DiagnosticsSupport.record(category: "meeting", message: message)
+        Log.diagnostics.info("\(message, privacy: .public)")
+    }
+
     func discardSession() {
         coordinator.transcriptionEngine?.stop()
         coordinator.audioRecorder?.discardRecording()
         coordinator.transcriptStore.clear()
+        coordinator.pendingRecoverySessionID = nil
+        if let sessionID = _currentSessionID {
+            DiagnosticsSupport.record(category: "meeting", message: "Discarded session \(sessionID)")
+        }
         _currentSessionID = nil
         Task {
             await coordinator.sessionRepository.endSession()
@@ -521,6 +1154,22 @@ final class LiveSessionController {
     @inline(__always)
     private func set<T: Equatable>(_ kp: ReferenceWritableKeyPath<LiveSessionState, T>, _ value: T) {
         if state[keyPath: kp] != value { state[keyPath: kp] = value }
+    }
+
+    private func refreshLastEndedSessionRetranscriptionAvailability(for sessionID: String?) {
+        guard let sessionID else {
+            set(\.lastEndedSessionCanRetranscribe, false)
+            return
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            let canRetranscribe = await coordinator.sessionRepository.hasRetainedBatchAudio(sessionID: sessionID)
+            await MainActor.run {
+                guard self.state.lastEndedSession?.id == sessionID else { return }
+                self.set(\.lastEndedSessionCanRetranscribe, canRetranscribe)
+            }
+        }
     }
 
     @MainActor
@@ -548,29 +1197,60 @@ final class LiveSessionController {
             sidebarGenerating = coordinator.sidecastEngine?.isGenerating ?? false
         }
 
-        let isRunning = coordinator.transcriptionEngine?.isRunning ?? false
+        let lifecycleState = coordinator.state
+        let engineIsRunning = coordinator.transcriptionEngine?.isRunning ?? false
+        let activeTranscriptionModel = coordinator.transcriptionEngine?.currentTranscriptionModel() ?? settings.transcriptionModel
+        let liveCloudIssue = coordinator.transcriptionEngine?.liveCloudTranscriptIssue
+        let liveCloudIsProcessing = coordinator.transcriptionEngine?.liveCloudTranscriptionIsProcessing ?? false
+        let isRunning: Bool
+        let matchedCalendarEvent: CalendarEvent?
+        switch lifecycleState {
+        case .recording(let metadata):
+            // Prefer lifecycle state so the primary UI does not lag engine startup.
+            isRunning = true
+            matchedCalendarEvent = metadata.calendarEvent
+        case .ending(let metadata):
+            isRunning = engineIsRunning
+            matchedCalendarEvent = metadata.calendarEvent
+        case .idle:
+            isRunning = false
+            matchedCalendarEvent = nil
+        }
 
         // Use set(_:_:) for all Equatable fields: only fires @Observable withMutation
         // when the value actually changed, preventing spurious layout passes on NSHostingView.
         set(\.isRunning, isRunning)
-        set(\.sessionPhase, coordinator.state)
-        set(\.audioLevel, isRunning ? (coordinator.transcriptionEngine?.audioLevel ?? 0) : 0)
+        set(\.sessionPhase, lifecycleState)
+        set(\.audioLevel, engineIsRunning ? (coordinator.transcriptionEngine?.audioLevel ?? 0) : 0)
+        set(\.recordingElapsedSeconds, isRunning ? Self.recordingElapsedSeconds(for: lifecycleState) : 0)
         set(\.volatileYouText, coordinator.transcriptStore.volatileYouText)
         set(\.volatileThemText, coordinator.transcriptStore.volatileThemText)
         set(\.isGeneratingSuggestions, sidebarGenerating)
         set(\.batchStatus, coordinator.batchStatus)
         set(\.batchIsImporting, coordinator.batchIsImporting)
-        if state.lastEndedSession?.id != lastEndedSession?.id { state.lastEndedSession = lastEndedSession }
+        let previousLastEndedSessionID = state.lastEndedSession?.id
+        let currentLastEndedSessionID = lastEndedSession?.id
+        if previousLastEndedSessionID != currentLastEndedSessionID {
+            state.lastEndedSession = lastEndedSession
+            set(\.lastEndedSessionCanRetranscribe, false)
+            refreshLastEndedSessionRetranscriptionAvailability(for: currentLastEndedSessionID)
+        } else if state.lastEndedSession != lastEndedSession {
+            state.lastEndedSession = lastEndedSession
+        }
         set(\.lastSessionHasNotes, lastSessionHasNotes)
-        set(\.kbIndexingProgress, coordinator.knowledgeBase?.indexingProgress ?? "")
+        set(\.kbIndexingStatus, coordinator.knowledgeBase?.indexingStatus ?? .idle)
         set(\.statusMessage, coordinator.transcriptionEngine?.assetStatus)
         set(\.errorMessage, coordinator.transcriptionEngine?.lastError)
+        set(\.matchedCalendarEvent, matchedCalendarEvent)
         set(\.needsDownload, coordinator.transcriptionEngine?.needsModelDownload ?? false)
         set(\.downloadProgress, coordinator.transcriptionEngine?.downloadProgress)
         set(\.transcriptionPrompt, settings.transcriptionModel.downloadPrompt)
         set(\.modelDisplayName, activeModelRaw.split(separator: "/").last.map(String.init) ?? activeModelRaw)
         set(\.showLiveTranscript, settings.showLiveTranscript)
+        set(\.liveTranscriptNotice, isRunning ? Self.liveTranscriptNotice(for: activeTranscriptionModel, issue: liveCloudIssue, isProcessing: liveCloudIsProcessing) : nil)
+        set(\.liveTranscriptEmptyStateMessage, isRunning ? Self.liveTranscriptEmptyStateMessage(for: activeTranscriptionModel, issue: liveCloudIssue, isProcessing: liveCloudIsProcessing) : nil)
         set(\.isMicMuted, coordinator.transcriptionEngine?.isMicMuted ?? false)
+        set(\.isRecordingPaused, coordinator.transcriptionEngine?.isRecordingPaused ?? false)
         // scratchpadText is managed by updateScratchpad(), not refreshed from coordinator
         // downloadDetail is not Equatable; only update when nil-ness changes or download active
         let nextDetail = coordinator.transcriptionEngine?.downloadDetail
@@ -625,34 +1305,78 @@ final class LiveSessionController {
     private func synchronizeDerivedState(settings: AppSettings) {
         let currentState = state
 
-        if settings.kbFolderPath != observedKBFolderPath {
+        if let observedKBFolderPath {
+            if settings.kbFolderPath != observedKBFolderPath {
+                self.observedKBFolderPath = settings.kbFolderPath
+                if settings.kbFolderPath.isEmpty {
+                    coordinator.knowledgeBase?.clear()
+                } else {
+                    indexKBIfNeeded(settings: settings)
+                }
+            }
+        } else {
             observedKBFolderPath = settings.kbFolderPath
             if settings.kbFolderPath.isEmpty {
                 coordinator.knowledgeBase?.clear()
             } else {
-                indexKBIfNeeded(settings: settings)
+                loadKBCacheIfAvailable(settings: settings)
             }
         }
 
-        if settings.notesFolderPath != observedNotesFolderPath {
+        let dateSubfolderFormat = Self.dateSubfolderFormat(for: settings)
+        if settings.notesFolderPath != observedNotesFolderPath
+            || dateSubfolderFormat != observedMeetingTranscriptDateFolderFormat {
             observedNotesFolderPath = settings.notesFolderPath
+            observedMeetingTranscriptDateFolderFormat = dateSubfolderFormat
             if let resolvedURL = settings.resolveNotesFolderBookmark() {
                 Task {
-                    await coordinator.sessionRepository.setNotesFolderPath(resolvedURL, securityScoped: true)
+                    await coordinator.sessionRepository.setNotesFolderPath(
+                        resolvedURL,
+                        securityScoped: true,
+                        dateSubfolderFormat: dateSubfolderFormat
+                    )
                 }
                 coordinator.audioRecorder?.updateDirectory(resolvedURL, securityScoped: true)
             } else {
                 let url = URL(fileURLWithPath: settings.notesFolderPath)
                 Task {
-                    await coordinator.sessionRepository.setNotesFolderPath(url)
+                    await coordinator.sessionRepository.setNotesFolderPath(
+                        url,
+                        dateSubfolderFormat: dateSubfolderFormat
+                    )
                 }
                 coordinator.audioRecorder?.updateDirectory(url)
             }
         }
 
-        if settings.voyageApiKey != observedVoyageApiKey {
-            observedVoyageApiKey = settings.voyageApiKey
-            indexKBIfNeeded(settings: settings)
+        if settings.kbFolderPath.isEmpty {
+            observedEmbeddingProvider = nil
+            observedVoyageApiKey = nil
+        } else {
+            if let observedEmbeddingProvider {
+                if settings.embeddingProvider != observedEmbeddingProvider {
+                    self.observedEmbeddingProvider = settings.embeddingProvider
+                    indexKBIfNeeded(settings: settings)
+                }
+            } else {
+                observedEmbeddingProvider = settings.embeddingProvider
+            }
+
+            if settings.embeddingProvider == .voyageAI {
+                if settings.isSecretLoaded("voyageApiKey") {
+                    let voyageApiKey = settings.voyageApiKey
+                    if let observedVoyageApiKey {
+                        if voyageApiKey != observedVoyageApiKey {
+                            self.observedVoyageApiKey = voyageApiKey
+                            indexKBIfNeeded(settings: settings)
+                        }
+                    } else {
+                        observedVoyageApiKey = voyageApiKey
+                    }
+                }
+            } else {
+                observedVoyageApiKey = nil
+            }
         }
 
         if settings.transcriptionModel != observedTranscriptionModel {
@@ -674,6 +1398,31 @@ final class LiveSessionController {
             handleNewUtterances(startingAt: observedUtteranceCount, settings: settings)
         }
         observedUtteranceCount = utteranceCount
+
+        if currentState.isRunning {
+            observedPeakAudioLevelSinceStart = max(observedPeakAudioLevelSinceStart, currentState.audioLevel)
+            if case .recording(let metadata) = currentState.sessionPhase {
+                let captureHealth = coordinator.transcriptionEngine?.captureHealthSnapshot
+                let input = RecordingHealthInput(
+                    elapsed: max(0, Date().timeIntervalSince(metadata.startedAt)),
+                    transcriptionModel: settings.transcriptionModel,
+                    utteranceCount: utteranceCount,
+                    peakAudioLevel: observedPeakAudioLevelSinceStart,
+                    micHasCapturedFrames: captureHealth?.micHasCapturedFrames ?? false,
+                    systemHasCapturedFrames: captureHealth?.systemHasCapturedFrames ?? false,
+                    micCaptureError: captureHealth?.micCaptureError,
+                    isMicMuted: currentState.isMicMuted,
+                    isRecordingPaused: currentState.isRecordingPaused,
+                    hasBlockingError: currentState.errorMessage != nil
+                )
+                set(\.recordingHealthNotice, Self.recordingHealthNotice(for: input))
+            } else {
+                set(\.recordingHealthNotice, nil)
+            }
+        } else {
+            observedPeakAudioLevelSinceStart = 0
+            set(\.recordingHealthNotice, nil)
+        }
 
         if currentState.isRunning != observedIsRunning {
             observedIsRunning = currentState.isRunning

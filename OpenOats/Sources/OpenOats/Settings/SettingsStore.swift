@@ -11,6 +11,27 @@ final class SettingsStore {
     private let secretStore: AppSecretStore
     private static let enableLiveTranscriptCleanupLegacyKey = "enableTranscriptRefinement"
     private static let enableBatchRetranscriptionLegacyKey = "enableBatchRefinement"
+    @ObservationIgnored private var loadedSecretKeys: Set<String> = []
+
+    private func loadSecretIfNeeded(
+        key: String,
+        currentValue: String,
+        assign: (String) -> Void
+    ) -> String {
+        guard !loadedSecretKeys.contains(key) else { return currentValue }
+        let value = secretStore.load(key: key) ?? ""
+        loadedSecretKeys.insert(key)
+        assign(value)
+        return value
+    }
+
+    private func markSecretLoaded(_ key: String) {
+        loadedSecretKeys.insert(key)
+    }
+
+    func isSecretLoaded(_ key: String) -> Bool {
+        loadedSecretKeys.contains(key)
+    }
 
     // MARK: - AI Settings
 
@@ -27,11 +48,17 @@ final class SettingsStore {
 
     @ObservationIgnored nonisolated(unsafe) private var _openRouterApiKey: String
     var openRouterApiKey: String {
-        get { access(keyPath: \.openRouterApiKey); return _openRouterApiKey }
+        get {
+            access(keyPath: \.openRouterApiKey)
+            return loadSecretIfNeeded(key: "openRouterApiKey", currentValue: _openRouterApiKey) {
+                _openRouterApiKey = $0
+            }
+        }
         set {
             withMutation(keyPath: \.openRouterApiKey) {
                 let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 _openRouterApiKey = trimmed
+                markSecretLoaded("openRouterApiKey")
                 secretStore.save(key: "openRouterApiKey", value: trimmed)
             }
         }
@@ -39,11 +66,17 @@ final class SettingsStore {
 
     @ObservationIgnored nonisolated(unsafe) private var _assemblyAIApiKey: String
     var assemblyAIApiKey: String {
-        get { access(keyPath: \.assemblyAIApiKey); return _assemblyAIApiKey }
+        get {
+            access(keyPath: \.assemblyAIApiKey)
+            return loadSecretIfNeeded(key: "assemblyAIApiKey", currentValue: _assemblyAIApiKey) {
+                _assemblyAIApiKey = $0
+            }
+        }
         set {
             withMutation(keyPath: \.assemblyAIApiKey) {
                 let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 _assemblyAIApiKey = trimmed
+                markSecretLoaded("assemblyAIApiKey")
                 secretStore.save(key: "assemblyAIApiKey", value: trimmed)
             }
         }
@@ -51,11 +84,17 @@ final class SettingsStore {
 
     @ObservationIgnored nonisolated(unsafe) private var _elevenLabsApiKey: String
     var elevenLabsApiKey: String {
-        get { access(keyPath: \.elevenLabsApiKey); return _elevenLabsApiKey }
+        get {
+            access(keyPath: \.elevenLabsApiKey)
+            return loadSecretIfNeeded(key: "elevenLabsApiKey", currentValue: _elevenLabsApiKey) {
+                _elevenLabsApiKey = $0
+            }
+        }
         set {
             withMutation(keyPath: \.elevenLabsApiKey) {
                 let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 _elevenLabsApiKey = trimmed
+                markSecretLoaded("elevenLabsApiKey")
                 secretStore.save(key: "elevenLabsApiKey", value: trimmed)
             }
         }
@@ -129,11 +168,17 @@ final class SettingsStore {
 
     @ObservationIgnored nonisolated(unsafe) private var _openAILLMApiKey: String
     var openAILLMApiKey: String {
-        get { access(keyPath: \.openAILLMApiKey); return _openAILLMApiKey }
+        get {
+            access(keyPath: \.openAILLMApiKey)
+            return loadSecretIfNeeded(key: "openAILLMApiKey", currentValue: _openAILLMApiKey) {
+                _openAILLMApiKey = $0
+            }
+        }
         set {
             withMutation(keyPath: \.openAILLMApiKey) {
                 let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 _openAILLMApiKey = trimmed
+                markSecretLoaded("openAILLMApiKey")
                 secretStore.save(key: "openAILLMApiKey", value: trimmed)
             }
         }
@@ -163,11 +208,17 @@ final class SettingsStore {
 
     @ObservationIgnored nonisolated(unsafe) private var _openAIEmbedApiKey: String
     var openAIEmbedApiKey: String {
-        get { access(keyPath: \.openAIEmbedApiKey); return _openAIEmbedApiKey }
+        get {
+            access(keyPath: \.openAIEmbedApiKey)
+            return loadSecretIfNeeded(key: "openAIEmbedApiKey", currentValue: _openAIEmbedApiKey) {
+                _openAIEmbedApiKey = $0
+            }
+        }
         set {
             withMutation(keyPath: \.openAIEmbedApiKey) {
                 let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 _openAIEmbedApiKey = trimmed
+                markSecretLoaded("openAIEmbedApiKey")
                 secretStore.save(key: "openAIEmbedApiKey", value: trimmed)
             }
         }
@@ -208,11 +259,17 @@ final class SettingsStore {
 
     @ObservationIgnored nonisolated(unsafe) private var _voyageApiKey: String
     var voyageApiKey: String {
-        get { access(keyPath: \.voyageApiKey); return _voyageApiKey }
+        get {
+            access(keyPath: \.voyageApiKey)
+            return loadSecretIfNeeded(key: "voyageApiKey", currentValue: _voyageApiKey) {
+                _voyageApiKey = $0
+            }
+        }
         set {
             withMutation(keyPath: \.voyageApiKey) {
                 let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 _voyageApiKey = trimmed
+                markSecretLoaded("voyageApiKey")
                 secretStore.save(key: "voyageApiKey", value: trimmed)
             }
         }
@@ -694,6 +751,17 @@ final class SettingsStore {
         }
     }
 
+    @ObservationIgnored nonisolated(unsafe) private var _diagnosticLoggingEnabled: Bool
+    var diagnosticLoggingEnabled: Bool {
+        get { access(keyPath: \.diagnosticLoggingEnabled); return _diagnosticLoggingEnabled }
+        set {
+            withMutation(keyPath: \.diagnosticLoggingEnabled) {
+                _diagnosticLoggingEnabled = newValue
+                defaults.set(newValue, forKey: "diagnosticLoggingEnabled")
+            }
+        }
+    }
+
     @ObservationIgnored nonisolated(unsafe) private var _hasShownAutoDetectExplanation: Bool
     var hasShownAutoDetectExplanation: Bool {
         get { access(keyPath: \.hasShownAutoDetectExplanation); return _hasShownAutoDetectExplanation }
@@ -727,6 +795,17 @@ final class SettingsStore {
         }
     }
 
+    @ObservationIgnored nonisolated(unsafe) private var _shareCalendarContextWithCloudNotes: Bool
+    var shareCalendarContextWithCloudNotes: Bool {
+        get { access(keyPath: \.shareCalendarContextWithCloudNotes); return _shareCalendarContextWithCloudNotes }
+        set {
+            withMutation(keyPath: \.shareCalendarContextWithCloudNotes) {
+                _shareCalendarContextWithCloudNotes = newValue
+                defaults.set(newValue, forKey: "shareCalendarContextWithCloudNotes")
+            }
+        }
+    }
+
     // MARK: - Privacy Settings
 
     @ObservationIgnored nonisolated(unsafe) private var _hasAcknowledgedRecordingConsent: Bool
@@ -756,11 +835,74 @@ final class SettingsStore {
 
     @ObservationIgnored nonisolated(unsafe) private var _granolaApiKey: String
     var granolaApiKey: String {
-        get { access(keyPath: \.granolaApiKey); return _granolaApiKey }
+        get {
+            access(keyPath: \.granolaApiKey)
+            return loadSecretIfNeeded(key: "granolaApiKey", currentValue: _granolaApiKey) {
+                _granolaApiKey = $0
+            }
+        }
         set {
             withMutation(keyPath: \.granolaApiKey) {
                 _granolaApiKey = newValue
+                markSecretLoaded("granolaApiKey")
                 secretStore.save(key: "granolaApiKey", value: newValue)
+            }
+        }
+    }
+
+    // MARK: - Apple Notes Settings
+
+    @ObservationIgnored nonisolated(unsafe) private var _appleNotesEnabled: Bool
+    var appleNotesEnabled: Bool {
+        get { access(keyPath: \.appleNotesEnabled); return _appleNotesEnabled }
+        set {
+            withMutation(keyPath: \.appleNotesEnabled) {
+                _appleNotesEnabled = newValue
+                defaults.set(newValue, forKey: "appleNotesEnabled")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _appleNotesIncludeTranscript: Bool
+    var appleNotesIncludeTranscript: Bool {
+        get { access(keyPath: \.appleNotesIncludeTranscript); return _appleNotesIncludeTranscript }
+        set {
+            withMutation(keyPath: \.appleNotesIncludeTranscript) {
+                _appleNotesIncludeTranscript = newValue
+                defaults.set(newValue, forKey: "appleNotesIncludeTranscript")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _appleNotesFolderName: String
+    var appleNotesFolderName: String {
+        get { access(keyPath: \.appleNotesFolderName); return _appleNotesFolderName }
+        set {
+            withMutation(keyPath: \.appleNotesFolderName) {
+                _appleNotesFolderName = newValue
+                defaults.set(newValue, forKey: "appleNotesFolderName")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _appleNotesAccountName: String
+    var appleNotesAccountName: String {
+        get { access(keyPath: \.appleNotesAccountName); return _appleNotesAccountName }
+        set {
+            withMutation(keyPath: \.appleNotesAccountName) {
+                _appleNotesAccountName = newValue
+                defaults.set(newValue, forKey: "appleNotesAccountName")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _appleNotesAutoExport: Bool
+    var appleNotesAutoExport: Bool {
+        get { access(keyPath: \.appleNotesAutoExport); return _appleNotesAutoExport }
+        set {
+            withMutation(keyPath: \.appleNotesAutoExport) {
+                _appleNotesAutoExport = newValue
+                defaults.set(newValue, forKey: "appleNotesAutoExport")
             }
         }
     }
@@ -791,10 +933,16 @@ final class SettingsStore {
 
     @ObservationIgnored nonisolated(unsafe) private var _webhookSecret: String
     var webhookSecret: String {
-        get { access(keyPath: \.webhookSecret); return _webhookSecret }
+        get {
+            access(keyPath: \.webhookSecret)
+            return loadSecretIfNeeded(key: "webhookSecret", currentValue: _webhookSecret) {
+                _webhookSecret = $0
+            }
+        }
         set {
             withMutation(keyPath: \.webhookSecret) {
                 _webhookSecret = newValue
+                markSecretLoaded("webhookSecret")
                 secretStore.save(key: "webhookSecret", value: newValue)
             }
         }
@@ -822,6 +970,196 @@ final class SettingsStore {
                 defaults.set(newValue, forKey: "notesFolderPath")
             }
         }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _saveMeetingTranscriptsInDateSubfolders: Bool
+    var saveMeetingTranscriptsInDateSubfolders: Bool {
+        get {
+            access(keyPath: \.saveMeetingTranscriptsInDateSubfolders)
+            return _saveMeetingTranscriptsInDateSubfolders
+        }
+        set {
+            withMutation(keyPath: \.saveMeetingTranscriptsInDateSubfolders) {
+                _saveMeetingTranscriptsInDateSubfolders = newValue
+                defaults.set(newValue, forKey: "saveMeetingTranscriptsInDateSubfolders")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _meetingTranscriptDateFolderFormat: MeetingTranscriptDateFolderFormat
+    var meetingTranscriptDateFolderFormat: MeetingTranscriptDateFolderFormat {
+        get {
+            access(keyPath: \.meetingTranscriptDateFolderFormat)
+            return _meetingTranscriptDateFolderFormat
+        }
+        set {
+            withMutation(keyPath: \.meetingTranscriptDateFolderFormat) {
+                _meetingTranscriptDateFolderFormat = newValue
+                defaults.set(newValue.rawValue, forKey: "meetingTranscriptDateFolderFormat")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _notesFolders: [NotesFolderDefinition]
+    var notesFolders: [NotesFolderDefinition] {
+        get { access(keyPath: \.notesFolders); return _notesFolders }
+        set {
+            withMutation(keyPath: \.notesFolders) {
+                _notesFolders = Self.normalizeNotesFolders(newValue)
+                defaults.set(Self.encodeNotesFolders(_notesFolders), forKey: "notesFolders")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _meetingPrepNotesByKey: [String: String]
+    var meetingPrepNotesByKey: [String: String] {
+        get { access(keyPath: \.meetingPrepNotesByKey); return _meetingPrepNotesByKey }
+        set {
+            withMutation(keyPath: \.meetingPrepNotesByKey) {
+                _meetingPrepNotesByKey = Self.normalizeMeetingPrepNotes(newValue)
+                defaults.set(Self.encodeMeetingPrepNotes(_meetingPrepNotesByKey), forKey: "meetingPrepNotesByKey")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _meetingHistoryAliasesByKey: [String: String]
+    var meetingHistoryAliasesByKey: [String: String] {
+        get { access(keyPath: \.meetingHistoryAliasesByKey); return _meetingHistoryAliasesByKey }
+        set {
+            withMutation(keyPath: \.meetingHistoryAliasesByKey) {
+                _meetingHistoryAliasesByKey = Self.normalizeMeetingHistoryAliases(newValue)
+                defaults.set(
+                    Self.encodeMeetingHistoryAliases(_meetingHistoryAliasesByKey),
+                    forKey: "meetingHistoryAliasesByKey"
+                )
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _meetingFamilyPreferencesByKey: [String: MeetingFamilyPreferences]
+    var meetingFamilyPreferencesByKey: [String: MeetingFamilyPreferences] {
+        get { access(keyPath: \.meetingFamilyPreferencesByKey); return _meetingFamilyPreferencesByKey }
+        set {
+            withMutation(keyPath: \.meetingFamilyPreferencesByKey) {
+                _meetingFamilyPreferencesByKey = Self.normalizeMeetingFamilyPreferences(newValue)
+                defaults.set(
+                    Self.encodeMeetingFamilyPreferences(_meetingFamilyPreferencesByKey),
+                    forKey: "meetingFamilyPreferencesByKey"
+                )
+            }
+        }
+    }
+
+    func meetingPrepNotes(for event: CalendarEvent) -> String {
+        for key in orderedMeetingFamilyKeys(for: event) {
+            if let notes = meetingPrepNotesByKey[key], !notes.isEmpty {
+                return notes
+            }
+        }
+        return ""
+    }
+
+    func setMeetingPrepNotes(_ text: String, for event: CalendarEvent) {
+        let key = canonicalMeetingHistoryKey(for: event)
+        var notes = meetingPrepNotesByKey
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            notes.removeValue(forKey: key)
+        } else {
+            notes[key] = text
+        }
+        meetingPrepNotesByKey = notes
+    }
+
+    func canonicalMeetingHistoryKey(for event: CalendarEvent) -> String {
+        canonicalMeetingHistoryKey(forHistoryKey: MeetingHistoryResolver.preferredHistoryKey(for: event))
+    }
+
+    func canonicalMeetingHistoryKey(forHistoryKey historyKey: String) -> String {
+        MeetingHistoryResolver.canonicalHistoryKey(
+            for: historyKey,
+            aliases: meetingHistoryAliasesByKey
+        )
+    }
+
+    func meetingFamilyPreferences(for event: CalendarEvent) -> MeetingFamilyPreferences? {
+        for key in orderedMeetingFamilyKeys(for: event) {
+            if let preferences = meetingFamilyPreferencesByKey[key] {
+                return preferences
+            }
+        }
+        return nil
+    }
+
+    func meetingFamilyPreferences(forHistoryKey historyKey: String) -> MeetingFamilyPreferences? {
+        let key = canonicalMeetingHistoryKey(forHistoryKey: historyKey)
+        return meetingFamilyPreferencesByKey[key]
+    }
+
+    func setMeetingFamilyTemplatePreference(_ templateID: UUID?, for event: CalendarEvent) {
+        setMeetingFamilyTemplatePreference(
+            templateID,
+            forHistoryKey: MeetingHistoryResolver.preferredHistoryKey(for: event)
+        )
+    }
+
+    func setMeetingFamilyTemplatePreference(_ templateID: UUID?, forHistoryKey historyKey: String) {
+        let key = canonicalMeetingHistoryKey(forHistoryKey: historyKey)
+        guard !key.isEmpty else { return }
+
+        var preferences = meetingFamilyPreferencesByKey
+        var value = preferences[key] ?? MeetingFamilyPreferences()
+        value.templateID = templateID
+
+        if value.isEmpty {
+            preferences.removeValue(forKey: key)
+        } else {
+            preferences[key] = value
+        }
+        meetingFamilyPreferencesByKey = preferences
+    }
+
+    func setMeetingFamilyFolderPreference(_ folderPath: String?, for event: CalendarEvent) {
+        setMeetingFamilyFolderPreference(
+            folderPath,
+            forHistoryKey: MeetingHistoryResolver.preferredHistoryKey(for: event)
+        )
+    }
+
+    private func orderedMeetingFamilyKeys(for event: CalendarEvent) -> [String] {
+        var keys: [String] = []
+        for historyKey in MeetingHistoryResolver.historyKeys(for: event) {
+            let canonicalKey = canonicalMeetingHistoryKey(forHistoryKey: historyKey)
+            if !canonicalKey.isEmpty, !keys.contains(canonicalKey) {
+                keys.append(canonicalKey)
+            }
+        }
+        return keys
+    }
+
+    func setMeetingFamilyFolderPreference(_ folderPath: String?, forHistoryKey historyKey: String) {
+        let key = canonicalMeetingHistoryKey(forHistoryKey: historyKey)
+        guard !key.isEmpty else { return }
+
+        var preferences = meetingFamilyPreferencesByKey
+        var value = preferences[key] ?? MeetingFamilyPreferences()
+        value.folderPath = Self.normalizeMeetingFamilyFolderPath(folderPath)
+
+        if value.isEmpty {
+            preferences.removeValue(forKey: key)
+        } else {
+            preferences[key] = value
+        }
+        meetingFamilyPreferencesByKey = preferences
+    }
+
+    func linkMeetingHistoryAlias(from aliasHistoryKey: String, to canonicalHistoryKey: String) {
+        let aliasKey = MeetingHistoryResolver.historyKey(for: aliasHistoryKey)
+        let targetKey = canonicalMeetingHistoryKey(forHistoryKey: canonicalHistoryKey)
+        guard !aliasKey.isEmpty, !targetKey.isEmpty, aliasKey != targetKey else { return }
+
+        var aliases = meetingHistoryAliasesByKey
+        aliases[aliasKey] = targetKey
+        meetingHistoryAliasesByKey = aliases
     }
 
     /// Save a security-scoped bookmark for the user-selected notes folder.
@@ -911,23 +1249,23 @@ final class SettingsStore {
 
         // AI Settings
         self._llmProvider = LLMProvider(rawValue: defaults.string(forKey: "llmProvider") ?? "") ?? .openRouter
-        self._openRouterApiKey = storage.secretStore.load(key: "openRouterApiKey") ?? ""
-        self._assemblyAIApiKey = storage.secretStore.load(key: "assemblyAIApiKey") ?? ""
-        self._elevenLabsApiKey = storage.secretStore.load(key: "elevenLabsApiKey") ?? ""
+        self._openRouterApiKey = ""
+        self._assemblyAIApiKey = ""
+        self._elevenLabsApiKey = ""
         self._ollamaBaseURL = defaults.string(forKey: "ollamaBaseURL") ?? "http://localhost:11434"
         self._ollamaLLMModel = defaults.string(forKey: "ollamaLLMModel") ?? "qwen3:8b"
         self._ollamaEmbedModel = defaults.string(forKey: "ollamaEmbedModel") ?? "nomic-embed-text"
         self._mlxBaseURL = defaults.string(forKey: "mlxBaseURL") ?? "http://localhost:8080"
         self._mlxModel = defaults.string(forKey: "mlxModel") ?? "mlx-community/Llama-3.2-3B-Instruct-4bit"
         self._openAILLMBaseURL = defaults.string(forKey: "openAILLMBaseURL") ?? "http://localhost:4000"
-        self._openAILLMApiKey = storage.secretStore.load(key: "openAILLMApiKey") ?? ""
+        self._openAILLMApiKey = ""
         self._openAILLMModel = defaults.string(forKey: "openAILLMModel") ?? ""
         self._openAIEmbedBaseURL = defaults.string(forKey: "openAIEmbedBaseURL") ?? "http://localhost:8080"
-        self._openAIEmbedApiKey = storage.secretStore.load(key: "openAIEmbedApiKey") ?? ""
+        self._openAIEmbedApiKey = ""
         self._openAIEmbedModel = defaults.string(forKey: "openAIEmbedModel") ?? "text-embedding-3-small"
         self._selectedModel = defaults.string(forKey: "selectedModel") ?? "google/gemini-3-flash-preview"
         self._embeddingProvider = EmbeddingProvider(rawValue: defaults.string(forKey: "embeddingProvider") ?? "") ?? .voyageAI
-        self._voyageApiKey = storage.secretStore.load(key: "voyageApiKey") ?? ""
+        self._voyageApiKey = ""
         self._suggestionVerbosity = SuggestionVerbosity(
             rawValue: defaults.string(forKey: "suggestionVerbosity") ?? ""
         ) ?? .quiet
@@ -1048,9 +1386,11 @@ final class SettingsStore {
         self._silenceTimeoutMinutes = defaults.object(forKey: "silenceTimeoutMinutes") != nil
             ? defaults.integer(forKey: "silenceTimeoutMinutes") : 15
         self._detectionLogEnabled = defaults.bool(forKey: "detectionLogEnabled")
+        self._diagnosticLoggingEnabled = defaults.bool(forKey: "diagnosticLoggingEnabled")
         self._hasShownAutoDetectExplanation = defaults.bool(forKey: "hasShownAutoDetectExplanation")
         self._hasShownCameraDetectExplanation = defaults.bool(forKey: "hasShownCameraDetectExplanation")
         self._calendarIntegrationEnabled = defaults.bool(forKey: "calendarIntegrationEnabled")
+        self._shareCalendarContextWithCloudNotes = defaults.bool(forKey: "shareCalendarContextWithCloudNotes")
 
         // Privacy Settings
         self._hasAcknowledgedRecordingConsent = defaults.bool(forKey: "hasAcknowledgedRecordingConsent")
@@ -1061,12 +1401,27 @@ final class SettingsStore {
         }
 
         // Import Settings
-        self._granolaApiKey = storage.secretStore.load(key: "granolaApiKey") ?? ""
+        self._granolaApiKey = ""
+
+        // Apple Notes Settings
+        self._appleNotesEnabled = defaults.bool(forKey: "appleNotesEnabled")
+        if defaults.object(forKey: "appleNotesIncludeTranscript") == nil {
+            self._appleNotesIncludeTranscript = true
+        } else {
+            self._appleNotesIncludeTranscript = defaults.bool(forKey: "appleNotesIncludeTranscript")
+        }
+        self._appleNotesFolderName = defaults.string(forKey: "appleNotesFolderName") ?? "OpenOats"
+        self._appleNotesAccountName = defaults.string(forKey: "appleNotesAccountName") ?? "iCloud"
+        if defaults.object(forKey: "appleNotesAutoExport") == nil {
+            self._appleNotesAutoExport = false
+        } else {
+            self._appleNotesAutoExport = defaults.bool(forKey: "appleNotesAutoExport")
+        }
 
         // Webhook Settings
         self._webhookEnabled = defaults.bool(forKey: "webhookEnabled")
         self._webhookURL = defaults.string(forKey: "webhookURL") ?? ""
-        self._webhookSecret = storage.secretStore.load(key: "webhookSecret") ?? ""
+        self._webhookSecret = ""
 
         // UI Settings
         if defaults.object(forKey: "showLiveTranscript") == nil {
@@ -1076,6 +1431,18 @@ final class SettingsStore {
         }
         let defaultNotesPath = storage.defaultNotesDirectory.path
         self._notesFolderPath = defaults.string(forKey: "notesFolderPath") ?? defaultNotesPath
+        self._saveMeetingTranscriptsInDateSubfolders = defaults.bool(forKey: "saveMeetingTranscriptsInDateSubfolders")
+        self._meetingTranscriptDateFolderFormat = defaults
+            .string(forKey: "meetingTranscriptDateFolderFormat")
+            .flatMap(MeetingTranscriptDateFolderFormat.init(rawValue:)) ?? .iso
+        self._notesFolders = Self.decodeNotesFolders(defaults.data(forKey: "notesFolders")) ?? []
+        self._meetingPrepNotesByKey = Self.decodeMeetingPrepNotes(defaults.data(forKey: "meetingPrepNotesByKey")) ?? [:]
+        self._meetingHistoryAliasesByKey = Self.decodeMeetingHistoryAliases(
+            defaults.data(forKey: "meetingHistoryAliasesByKey")
+        ) ?? [:]
+        self._meetingFamilyPreferencesByKey = Self.decodeMeetingFamilyPreferences(
+            defaults.data(forKey: "meetingFamilyPreferencesByKey")
+        ) ?? [:]
         self._kbFolderPath = defaults.string(forKey: "kbFolderPath") ?? ""
         self._hasSeenLaunchAtLoginSuggestion = defaults.bool(forKey: "hasSeenLaunchAtLoginSuggestion")
 
@@ -1179,6 +1546,107 @@ final class SettingsStore {
         guard let data else { return nil }
         return try? JSONDecoder().decode([SidecastPersona].self, from: data)
     }
+
+    private static func encodeNotesFolders(_ folders: [NotesFolderDefinition]) -> Data? {
+        let encoder = JSONEncoder()
+        return try? encoder.encode(folders)
+    }
+
+    private static func decodeNotesFolders(_ data: Data?) -> [NotesFolderDefinition]? {
+        guard let data else { return nil }
+        return try? JSONDecoder().decode([NotesFolderDefinition].self, from: data)
+    }
+
+    private static func normalizeNotesFolders(_ folders: [NotesFolderDefinition]) -> [NotesFolderDefinition] {
+        var seen = Set<String>()
+        var result: [NotesFolderDefinition] = []
+        for folder in folders {
+            guard let normalizedPath = NotesFolderDefinition.normalizePath(folder.path) else { continue }
+            let key = normalizedPath.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            result.append(NotesFolderDefinition(id: folder.id, path: normalizedPath, color: folder.color))
+        }
+        return result.sorted { $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending }
+    }
+
+    private static func encodeMeetingPrepNotes(_ notes: [String: String]) -> Data? {
+        let encoder = JSONEncoder()
+        return try? encoder.encode(notes)
+    }
+
+    private static func decodeMeetingPrepNotes(_ data: Data?) -> [String: String]? {
+        guard let data else { return nil }
+        return try? JSONDecoder().decode([String: String].self, from: data)
+    }
+
+    private static func encodeMeetingHistoryAliases(_ aliases: [String: String]) -> Data? {
+        let encoder = JSONEncoder()
+        return try? encoder.encode(aliases)
+    }
+
+    private static func decodeMeetingHistoryAliases(_ data: Data?) -> [String: String]? {
+        guard let data else { return nil }
+        return try? JSONDecoder().decode([String: String].self, from: data)
+    }
+
+    private static func encodeMeetingFamilyPreferences(_ preferences: [String: MeetingFamilyPreferences]) -> Data? {
+        let encoder = JSONEncoder()
+        return try? encoder.encode(preferences)
+    }
+
+    private static func decodeMeetingFamilyPreferences(_ data: Data?) -> [String: MeetingFamilyPreferences]? {
+        guard let data else { return nil }
+        return try? JSONDecoder().decode([String: MeetingFamilyPreferences].self, from: data)
+    }
+
+    private static func normalizeMeetingPrepNotes(_ notes: [String: String]) -> [String: String] {
+        var result: [String: String] = [:]
+        for (rawKey, rawValue) in notes {
+            let normalizedKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalizedKey.isEmpty else { continue }
+            guard !rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            result[normalizedKey] = rawValue
+        }
+        return result
+    }
+
+    private static func normalizeMeetingHistoryAliases(_ aliases: [String: String]) -> [String: String] {
+        var result: [String: String] = [:]
+        for (rawKey, rawValue) in aliases {
+            let normalizedKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let normalizedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalizedKey.isEmpty, !normalizedValue.isEmpty, normalizedKey != normalizedValue else {
+                continue
+            }
+            result[normalizedKey] = normalizedValue
+        }
+        return result
+    }
+
+    private static func normalizeMeetingFamilyPreferences(
+        _ preferences: [String: MeetingFamilyPreferences]
+    ) -> [String: MeetingFamilyPreferences] {
+        var result: [String: MeetingFamilyPreferences] = [:]
+        for (rawKey, rawValue) in preferences {
+            let normalizedKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalizedKey.isEmpty else { continue }
+            let normalizedValue = MeetingFamilyPreferences(
+                templateID: rawValue.templateID,
+                folderPath: normalizeMeetingFamilyFolderPath(rawValue.folderPath)
+            )
+            guard !normalizedValue.isEmpty else { continue }
+            result[normalizedKey] = normalizedValue
+        }
+        return result
+    }
+
+    private static func normalizeMeetingFamilyFolderPath(_ folderPath: String?) -> String? {
+        guard let normalized = NotesFolderDefinition.normalizePath(folderPath ?? "") else { return nil }
+        let componentCount = normalized.split(separator: "/").count
+        guard componentCount <= 2 else { return nil }
+        return normalized
+    }
 }
 
 // MARK: - Migration
@@ -1208,9 +1676,8 @@ extension SettingsStore {
         let oldService = "com.onthespot.app"
         let keychainKeys = ["openRouterApiKey", "voyageApiKey"]
         for key in keychainKeys {
-            if KeychainHelper.load(key: key) == nil,
-               let oldValue = Self.loadKeychain(service: oldService, key: key) {
-                KeychainHelper.save(key: key, value: oldValue)
+            if let oldValue = Self.loadKeychain(service: oldService, key: key) {
+                KeychainHelper.saveIfMissing(key: key, value: oldValue)
             }
         }
     }
@@ -1242,9 +1709,8 @@ extension SettingsStore {
         let oldService = "com.opengranola.app"
         let keychainKeys = ["openRouterApiKey", "voyageApiKey"]
         for key in keychainKeys {
-            if KeychainHelper.load(key: key) == nil,
-               let oldValue = Self.loadKeychain(service: oldService, key: key) {
-                KeychainHelper.save(key: key, value: oldValue)
+            if let oldValue = Self.loadKeychain(service: oldService, key: key) {
+                KeychainHelper.saveIfMissing(key: key, value: oldValue)
             }
         }
 
@@ -1321,9 +1787,8 @@ extension SettingsStore {
         let oldService = "com.opengranola.app"
         let keychainKeys = ["openRouterApiKey", "voyageApiKey", "openAIEmbedApiKey", "openAILLMApiKey"]
         for key in keychainKeys {
-            if KeychainHelper.load(key: key) == nil,
-               let oldValue = loadKeychain(service: oldService, key: key) {
-                KeychainHelper.save(key: key, value: oldValue)
+            if let oldValue = loadKeychain(service: oldService, key: key) {
+                KeychainHelper.saveIfMissing(key: key, value: oldValue)
             }
         }
     }

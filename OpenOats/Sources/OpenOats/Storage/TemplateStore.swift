@@ -28,12 +28,12 @@ final class TemplateStore {
 
     // MARK: - Deterministic Built-in IDs
 
-    static let genericID   = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
-    static let oneOnOneID  = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-    static let discoveryID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
-    static let hiringID    = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
-    static let standUpID   = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
-    static let weeklyID    = UUID(uuidString: "00000000-0000-0000-0000-000000000005")!
+    nonisolated static let genericID   = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+    nonisolated static let oneOnOneID  = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    nonisolated static let discoveryID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+    nonisolated static let hiringID    = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+    nonisolated static let standUpID   = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
+    nonisolated static let weeklyID    = UUID(uuidString: "00000000-0000-0000-0000-000000000005")!
 
     static let builtInTemplates: [MeetingTemplate] = [
         MeetingTemplate(
@@ -238,7 +238,7 @@ final class TemplateStore {
                 }
             }
         } catch {
-            print("TemplateStore: failed to load, using defaults: \(error)")
+            Log.templateStore.error("Failed to load templates, using defaults: \(error, privacy: .public)")
             templates = Self.builtInTemplates
         }
         save()
@@ -251,7 +251,7 @@ final class TemplateStore {
             try data.write(to: storageURL, options: .atomic)
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storageURL.path)
         } catch {
-            print("TemplateStore: failed to save: \(error)")
+            Log.templateStore.error("Failed to save templates: \(error, privacy: .public)")
         }
     }
 }

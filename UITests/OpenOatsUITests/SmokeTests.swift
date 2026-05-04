@@ -44,12 +44,11 @@ final class SmokeTests: XCTestCase {
         let toggle = element(in: app, identifier: "app.controlBar.toggle")
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
 
-        toggle.click()
-        XCTAssertTrue(waitForCondition(timeout: 5) {
-            self.element(in: app, identifier: "app.controlBar.toggle").label.contains("Live")
-        })
+        app.typeKey("l", modifierFlags: [.command, .shift])
+        let stop = element(in: app, identifier: "app.controlBar.stop")
+        XCTAssertTrue(stop.waitForExistence(timeout: 5))
 
-        toggle.click()
+        app.typeKey("l", modifierFlags: [.command, .shift])
         XCTAssertTrue(element(in: app, identifier: "app.sessionEndedBanner").waitForExistence(timeout: 5))
     }
 
@@ -62,6 +61,32 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(element(in: app, identifier: "notes.generateButton").waitForExistence(timeout: 5))
         element(in: app, identifier: "notes.generateButton").click()
         XCTAssertTrue(element(in: app, identifier: "notes.renderedMarkdown").waitForExistence(timeout: 5))
+    }
+
+    func testNotesSmokeSupportsRenamingFromContextMenu() async {
+        let app = launchApp(scenario: "notesSmoke")
+
+        let deepLink = URL(string: "openoats://notes?sessionID=session_ui_test_notes")!
+        await openDeepLink(deepLink)
+
+        let sessionRow = element(in: app, identifier: "notes.session.session_ui_test_notes")
+        XCTAssertTrue(sessionRow.waitForExistence(timeout: 5))
+
+        sessionRow.rightClick()
+
+        let renameMenuItem = app.menuItems["Rename..."]
+        XCTAssertTrue(renameMenuItem.waitForExistence(timeout: 5))
+        renameMenuItem.click()
+
+        let renameField = app.textFields.firstMatch
+        XCTAssertTrue(renameField.waitForExistence(timeout: 5))
+        renameField.click()
+        renameField.typeKey("a", modifierFlags: .command)
+        renameField.typeText("Renamed Discovery Call")
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+
+        let titleLabel = app.staticTexts["Renamed Discovery Call"]
+        XCTAssertTrue(titleLabel.waitForExistence(timeout: 5))
     }
 
     private func launchApp(scenario: String) -> XCUIApplication {

@@ -22,6 +22,13 @@ public struct OpenOatsRootApp: App {
         self._container = State(initialValue: context.container)
         self.updaterController = context.updaterController
         self.defaults = context.container.defaults
+        AppLaunchBootstrap.context = .init(
+            settings: context.settings,
+            coordinator: context.coordinator,
+            container: context.container,
+            defaults: context.container.defaults
+        )
+        DiagnosticsSupport.record(category: "app", message: "App initialized")
     }
 
     public var body: some Scene {
@@ -32,18 +39,15 @@ public struct OpenOatsRootApp: App {
                 .environment(focusedPane)
                 .defaultAppStorage(defaults)
                 .onAppear {
-                    appDelegate.coordinator = coordinator
-                    appDelegate.settings = settings
-                    appDelegate.defaults = defaults
-                    appDelegate.container = container
-                    if case .live = container.mode {
-                        appDelegate.setupMenuBarIfNeeded(
-                            coordinator: coordinator,
-                            settings: settings,
-                            showMainWindow: { [self] in showMainWindow() },
-                            checkForUpdates: { updaterController.checkForUpdatesFromMenuBar() }
-                        )
-                    }
+                    appDelegate.configure(
+                        coordinator: coordinator,
+                        settings: settings,
+                        defaults: defaults,
+                        container: container,
+                        showMainWindow: { [self] in showMainWindow() },
+                        checkForUpdates: { updaterController.checkForUpdatesFromMenuBar() }
+                    )
+                    DiagnosticsSupport.record(category: "app", message: "Main window appeared")
                     settings.applyScreenShareVisibility()
                 }
                 .onOpenURL { url in
@@ -172,6 +176,7 @@ extension OpenOatsRootApp {
 
         guard panel.runModal() == .OK, let fileURL = panel.url else { return }
 
+        container.ensureRecordingServicesInitialized(settings: settings, coordinator: coordinator)
         guard let batchAudioTranscriber = coordinator.batchAudioTranscriber else { return }
 
         let model = settings.transcriptionModel
@@ -272,6 +277,18 @@ extension Notification.Name {
 }
 
 @MainActor
+private enum AppLaunchBootstrap {
+    struct Context {
+        let settings: AppSettings
+        let coordinator: AppCoordinator
+        let container: AppContainer
+        let defaults: UserDefaults
+    }
+
+    static var context: Context?
+}
+
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var windowObserver: Any?
     private var menuBarController: MenuBarController?
@@ -280,27 +297,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var settings: AppSettings?
     var container: AppContainer?
     var defaults: UserDefaults = .standard
+    var showMainWindowAction: (() -> Void)?
+    var checkForUpdatesAction: (() -> Void)?
 
-    func setupMenuBarIfNeeded(
+    func configure(
         coordinator: AppCoordinator,
         settings: AppSettings,
-        showMainWindow: @escaping () -> Void,
-        checkForUpdates: @escaping () -> Void
+        defaults: UserDefaults,
+        container: AppContainer,
+        showMainWindow: (() -> Void)? = nil,
+        checkForUpdates: (() -> Void)? = nil
     ) {
-        guard menuBarController == nil else { return }
+        self.coordinator = coordinator
+        self.settings = settings
+        self.defaults = defaults
+        self.container = container
+        if let showMainWindow {
+            showMainWindowAction = showMainWindow
+        }
+        if let checkForUpdates {
+            checkForUpdatesAction = checkForUpdates
+        }
+        if case .live = container.mode {
+            DiagnosticsSupport.record(
+                category: "menu",
+                message: "Configuring menu bar controller from app delegate activationPolicy=\(activationPolicyDescription())"
+            )
+            setupMenuBarIfNeeded(coordinator: coordinator, settings: settings)
+        }
+    }
 
-        container?.ensureServicesInitialized(settings: settings, coordinator: coordinator)
+    func setupMenuBarIfNeeded(coordinator: AppCoordinator, settings: AppSettings) {
+        if let menuBarController {
+            menuBarController.refreshStatusItem()
+            return
+        }
 
         let controller = MenuBarController(
             coordinator: coordinator,
             settings: settings,
-            onCheckForUpdates: checkForUpdates
+            onCheckForUpdates: { [weak self] in
+                self?.checkForUpdatesAction?()
+            },
+            onToggleMeeting: { [weak self] in
+                self?.toggleMeeting()
+            }
         )
-        controller.onShowMainWindow = showMainWindow
+        controller.onShowMainWindow = { [weak self] in
+            if let action = self?.showMainWindowAction {
+                action()
+            } else {
+                self?.fallbackShowMainWindow()
+            }
+        }
         controller.onQuitApp = { [weak self] in
             self?.handleQuit()
         }
         menuBarController = controller
+        DiagnosticsSupport.record(
+            category: "menu",
+            message: "Menu bar controller created activationPolicy=\(activationPolicyDescription())"
+        )
     }
 
     private var isUITest: Bool {
@@ -313,6 +370,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !isUITest {
             NSApp.setActivationPolicy(.regular)
+        }
+
+        if let context = AppLaunchBootstrap.context {
+            DiagnosticsSupport.record(
+                category: "menu",
+                message: "Consuming launch bootstrap activationPolicy=\(activationPolicyDescription())"
+            )
+            configure(
+                coordinator: context.coordinator,
+                settings: context.settings,
+                defaults: context.defaults,
+                container: context.container
+            )
+            AppLaunchBootstrap.context = nil
         }
 
         let hidden = defaults.object(forKey: "hideFromScreenShare") == nil
@@ -359,6 +430,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         for item in viewMenu.items where item.title == "Enter Full Screen" {
             viewMenu.removeItem(item)
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        DiagnosticsSupport.record(
+            category: "menu",
+            message: "Application became active activationPolicy=\(activationPolicyDescription())"
+        )
+        if let coordinator, let settings, let container, case .live = container.mode {
+            setupMenuBarIfNeeded(coordinator: coordinator, settings: settings)
+        } else {
+            menuBarController?.refreshStatusItem()
         }
     }
 
@@ -449,6 +532,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func fallbackShowMainWindow() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == OpenOatsRootApp.mainWindowID }) {
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    private func activationPolicyDescription() -> String {
+        switch NSApp.activationPolicy() {
+        case .regular:
+            return "regular"
+        case .accessory:
+            return "accessory"
+        case .prohibited:
+            return "prohibited"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
     // MARK: - Global Hotkey (Cmd+Shift+L)
 
     private func registerGlobalHotkey() {
@@ -489,6 +593,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func toggleMeeting() {
         guard let coordinator, let settings else { return }
         guard settings.hasAcknowledgedRecordingConsent else { return }
+
+        container?.ensureMeetingServicesInitialized(settings: settings, coordinator: coordinator)
 
         if coordinator.isRecording {
             coordinator.handle(.userStopped, settings: settings)

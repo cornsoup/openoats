@@ -17,6 +17,11 @@ actor OpenRouterClient {
         return URL(string: base + "/v1/chat/completions")
     }
 
+    static func isLocalHost(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0.0.0.0"
+    }
+
     struct Message: Codable, Sendable {
         let role: String
         let content: String
@@ -47,6 +52,18 @@ actor OpenRouterClient {
         return host.contains("openrouter.ai") || host.contains("openai.com")
     }
 
+    static func preflightError(for url: URL, apiKey: String?) -> OpenRouterError? {
+        guard let host = url.host?.lowercased(), host.contains("openrouter.ai") else {
+            return nil
+        }
+
+        guard let apiKey, !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .missingAPIKey(host: host)
+        }
+
+        return nil
+    }
+
     /// Streams the completion response, yielding text chunks.
     func streamCompletion(
         apiKey: String? = nil,
@@ -59,6 +76,10 @@ actor OpenRouterClient {
             let task = Task {
                 do {
                     let targetURL = baseURL ?? Self.defaultBaseURL
+                    if let preflightError = Self.preflightError(for: targetURL, apiKey: apiKey) {
+                        continuation.finish(throwing: preflightError)
+                        return
+                    }
                     let useNewParam = Self.usesMaxCompletionTokens(targetURL)
                     let request = ChatRequest(
                         model: model,
@@ -72,6 +93,10 @@ actor OpenRouterClient {
 
                     var urlRequest = URLRequest(url: targetURL)
                     urlRequest.httpMethod = "POST"
+                    // Idle timeout between streamed bytes. Must cover cold-start of local models
+                    // (Ollama/MLX) and first-token latency of reasoning models, which routinely
+                    // exceed URLRequest's 60s default.
+                    urlRequest.timeoutInterval = 300
                     urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     if let apiKey, !apiKey.isEmpty {
                         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -125,6 +150,9 @@ actor OpenRouterClient {
         webSearch: Bool = false
     ) async throws -> String {
         let targetURL = baseURL ?? Self.defaultBaseURL
+        if let preflightError = Self.preflightError(for: targetURL, apiKey: apiKey) {
+            throw preflightError
+        }
         let useNewParam = Self.usesMaxCompletionTokens(targetURL)
         let request = ChatRequest(
             model: model,
@@ -137,6 +165,9 @@ actor OpenRouterClient {
         )
         var urlRequest = URLRequest(url: targetURL)
         urlRequest.httpMethod = "POST"
+        // Total request timeout — covers gate / judge / structured-JSON calls that may hit
+        // slow local models or reasoning models. Default 60s is too aggressive in practice.
+        urlRequest.timeoutInterval = 300
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let apiKey, !apiKey.isEmpty {
             urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -160,6 +191,7 @@ actor OpenRouterClient {
 
     enum OpenRouterError: Error, LocalizedError {
         case httpError(Int, host: String?)
+        case missingAPIKey(host: String?)
 
         var errorDescription: String? {
             switch self {
@@ -171,6 +203,13 @@ actor OpenRouterClient {
                 case nil: "LLM"
                 }
                 return "\(provider) API error (HTTP \(code))"
+            case .missingAPIKey(let host):
+                let provider = switch host {
+                case let h? where h.contains("openrouter.ai"): "OpenRouter"
+                case let h?: h
+                case nil: "LLM"
+                }
+                return "\(provider) API key required"
             }
         }
     }

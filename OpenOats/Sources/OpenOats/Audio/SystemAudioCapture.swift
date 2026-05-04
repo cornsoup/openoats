@@ -9,9 +9,18 @@ import os
 /// Captures system output audio via a Core Audio process tap.
 final class SystemAudioCapture: @unchecked Sendable {
     private let _audioLevel = AudioLevel()
+    private let _hasCapturedFrames = SyncBool()
+    private let _paused = SyncBool()
 
     /// Thread-safe audio level (0…1) from the system audio stream.
-    var audioLevel: Float { _audioLevel.value }
+    var audioLevel: Float { _paused.value ? 0 : _audioLevel.value }
+    var hasCapturedFrames: Bool { _hasCapturedFrames.value }
+
+    /// When paused, buffers are not forwarded to the stream and audio level reads as 0.
+    var isPaused: Bool {
+        get { _paused.value }
+        set { _paused.value = newValue }
+    }
 
     private let _aggregateDeviceID = OSAllocatedUnfairLock<AudioObjectID>(
         uncheckedState: AudioObjectID(kAudioObjectUnknown)
@@ -38,6 +47,7 @@ final class SystemAudioCapture: @unchecked Sendable {
         let sysStream = AsyncStream<AVAudioPCMBuffer> { continuation in
             self._sysContinuation.withLock { $0 = continuation }
         }
+        _hasCapturedFrames.value = false
 
         let resolvedDeviceID: AudioDeviceID
         if let requested = outputDeviceID {
@@ -158,6 +168,7 @@ final class SystemAudioCapture: @unchecked Sendable {
     func stop() async {
         finishStream()
         _audioLevel.value = 0
+        _hasCapturedFrames.value = false
 
         let aggregateDeviceID = _aggregateDeviceID.withLock { state -> AudioObjectID in
             let current = state
@@ -236,7 +247,9 @@ final class SystemAudioCapture: @unchecked Sendable {
             vDSP_rmsqv(channelData[0], 1, &rms, vDSP_Length(pcmBuffer.frameLength))
             _audioLevel.value = min(rms * 25, 1.0)
         }
+        _hasCapturedFrames.value = true
 
+        guard !_paused.value else { return }
         _ = _sysContinuation.withLock { $0?.yield(pcmBuffer) }
     }
 
@@ -316,7 +329,7 @@ final class SystemAudioCapture: @unchecked Sendable {
             var nameAddress = propertyAddress(selector: kAudioObjectPropertyName)
             var cfName: Unmanaged<CFString>?
             var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-            guard AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &cfName) == noErr, let name = cfName?.takeRetainedValue() as String? else { continue }
+            guard AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &cfName) == noErr, let name = cfName?.takeUnretainedValue() as String? else { continue }
 
             result.append((id: deviceID, name: name))
         }
@@ -353,7 +366,7 @@ final class SystemAudioCapture: @unchecked Sendable {
         guard status == noErr, let uid else {
             throw CaptureError.outputDeviceUIDUnavailable(status)
         }
-        return uid.takeRetainedValue() as String
+        return uid.takeUnretainedValue() as String
     }
 
     private static func tapStreamDescription(for tapID: AudioObjectID) throws -> AudioStreamBasicDescription {

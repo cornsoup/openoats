@@ -1,8 +1,12 @@
+import AppKit
 import XCTest
 @testable import OpenOatsKit
 
 @MainActor
 final class LiveSessionControllerTests: XCTestCase {
+    private final class SecretLoadTracker: @unchecked Sendable {
+        var loadedKeys: [String] = []
+    }
 
     // MARK: - Helpers
 
@@ -16,7 +20,10 @@ final class LiveSessionControllerTests: XCTestCase {
         return (root, notesDirectory)
     }
 
-    private func makeSettings(notesDirectory: URL) -> AppSettings {
+    private func makeSettings(
+        notesDirectory: URL,
+        secretStore: AppSecretStore = .ephemeral
+    ) -> AppSettings {
         let suiteName = "com.openoats.tests.livesession.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName) ?? .standard
         defaults.removePersistentDomain(forName: suiteName)
@@ -24,11 +31,22 @@ final class LiveSessionControllerTests: XCTestCase {
         defaults.set(true, forKey: "hasAcknowledgedRecordingConsent")
         let storage = AppSettingsStorage(
             defaults: defaults,
-            secretStore: .ephemeral,
+            secretStore: secretStore,
             defaultNotesDirectory: notesDirectory,
             runMigrations: false
         )
         return AppSettings(storage: storage)
+    }
+
+    private func makePNGData() -> Data {
+        let image = NSImage(size: NSSize(width: 2, height: 2))
+        image.lockFocus()
+        NSColor.systemBlue.setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: 2, height: 2)).fill()
+        image.unlockFocus()
+
+        let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!
+        return bitmap.representation(using: .png, properties: [:])!
     }
 
     private func makeController(
@@ -61,6 +79,58 @@ final class LiveSessionControllerTests: XCTestCase {
         return (controller, coordinator)
     }
 
+    private func makeLiveController(
+        root: URL,
+        notesDirectory: URL,
+        settings: AppSettings
+    ) -> (LiveSessionController, AppCoordinator) {
+        let transcriptStore = TranscriptStore()
+        let coordinator = AppCoordinator(
+            sessionRepository: SessionRepository(rootDirectory: root),
+            templateStore: TemplateStore(rootDirectory: root),
+            notesEngine: NotesEngine(mode: .scripted(markdown: "Test")),
+            transcriptStore: transcriptStore
+        )
+        coordinator.transcriptionEngine = TranscriptionEngine(
+            transcriptStore: transcriptStore,
+            settings: settings
+        )
+
+        let container = AppContainer(
+            mode: .live,
+            defaults: .standard,
+            appSupportDirectory: root,
+            notesDirectory: notesDirectory
+        )
+        let controller = LiveSessionController(coordinator: coordinator, container: container)
+        coordinator.liveSessionController = controller
+        return (controller, coordinator)
+    }
+
+    private func makeUninitializedController(
+        root: URL,
+        notesDirectory: URL,
+        settings: AppSettings
+    ) -> (LiveSessionController, AppCoordinator) {
+        let transcriptStore = TranscriptStore()
+        let coordinator = AppCoordinator(
+            sessionRepository: SessionRepository(rootDirectory: root),
+            templateStore: TemplateStore(rootDirectory: root),
+            notesEngine: NotesEngine(mode: .scripted(markdown: "Test")),
+            transcriptStore: transcriptStore
+        )
+        let defaults = UserDefaults(suiteName: "com.openoats.tests.lazyservices.\(UUID().uuidString)") ?? .standard
+        let container = AppContainer(
+            mode: .uiTest(.launchSmoke),
+            defaults: defaults,
+            appSupportDirectory: root,
+            notesDirectory: notesDirectory
+        )
+        let controller = LiveSessionController(coordinator: coordinator, container: container)
+        coordinator.liveSessionController = controller
+        return (controller, coordinator)
+    }
+
     // MARK: - Tests
 
     func testStartSessionTransitionsStateToRecordingSynchronously() {
@@ -82,6 +152,79 @@ final class LiveSessionControllerTests: XCTestCase {
         } else {
             XCTFail("Expected .recording state immediately after startSession, got \(coordinator.state)")
         }
+    }
+
+    func testCloudStartPreflightBlocksMissingAPIKey() async {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        settings.transcriptionModel = .elevenLabsScribe
+        let (controller, coordinator) = makeLiveController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
+        )
+
+        controller.startSession(settings: settings)
+        try? await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(coordinator.state, .idle)
+        XCTAssertFalse(controller.state.isRunning)
+        XCTAssertEqual(
+            controller.state.errorMessage,
+            "Missing ElevenLabs Scribe API key. Check Settings > Transcription."
+        )
+    }
+
+    func testCloudStartPreflightBlocksUnavailableOutputDevice() async {
+        let dirs = makeTempDirs()
+        let secretStore = AppSecretStore(
+            loadValue: { _ in "test-key" },
+            saveValue: { _, _ in }
+        )
+        let settings = makeSettings(notesDirectory: dirs.notes, secretStore: secretStore)
+        settings.transcriptionModel = .assemblyAI
+        settings.outputDeviceID = 999_999_999
+        let (controller, coordinator) = makeLiveController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
+        )
+
+        controller.startSession(settings: settings)
+        try? await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(coordinator.state, .idle)
+        XCTAssertFalse(controller.state.isRunning)
+        XCTAssertEqual(
+            controller.state.errorMessage,
+            "The selected output device is no longer available. Choose another output device in Settings > Transcription."
+        )
+    }
+
+    func testCloudStartPreflightBlocksUnavailableMicrophone() async {
+        let dirs = makeTempDirs()
+        let secretStore = AppSecretStore(
+            loadValue: { _ in "test-key" },
+            saveValue: { _, _ in }
+        )
+        let settings = makeSettings(notesDirectory: dirs.notes, secretStore: secretStore)
+        settings.transcriptionModel = .assemblyAI
+        settings.inputDeviceID = 999_999_999
+        let (controller, coordinator) = makeLiveController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
+        )
+
+        controller.startSession(settings: settings)
+        try? await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(coordinator.state, .idle)
+        XCTAssertFalse(controller.state.isRunning)
+        XCTAssertEqual(
+            controller.state.errorMessage,
+            "The selected microphone is no longer available. Choose another microphone in Settings > Transcription."
+        )
     }
 
     func testStartSessionWhileRunningIsNoOp() async {
@@ -113,6 +256,186 @@ final class LiveSessionControllerTests: XCTestCase {
         }
     }
 
+    func testStartSessionReusesAbandonedMeetingStubForSameCalendarEvent() async {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        let now = Date()
+        let event = CalendarEvent(
+            id: "evt-resume-stub",
+            title: "Payment Ops / Merchant stand up",
+            startDate: now.addingTimeInterval(-120),
+            endDate: now.addingTimeInterval(780),
+            organizer: nil,
+            participants: [],
+            isOnlineMeeting: true,
+            meetingURL: URL(string: "https://meet.example.com/payment-ops")
+        )
+
+        let repository = SessionRepository(rootDirectory: dirs.root)
+        let abandonedHandle = await repository.startSession(
+            config: SessionStartConfig(
+                templateSnapshot: nil,
+                title: event.title,
+                calendarEvent: event
+            )
+        )
+        await repository.endSession()
+
+        let (controller, coordinator) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings,
+            scripted: [Utterance(text: "Recovered", speaker: .you)]
+        )
+
+        controller.startSession(settings: settings, calendarEventOverride: event)
+
+        var activeSessionID: String?
+        for _ in 0..<20 {
+            activeSessionID = await coordinator.sessionRepository.getCurrentSessionID()
+            if activeSessionID != nil { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+
+        XCTAssertEqual(activeSessionID, abandonedHandle.sessionID)
+    }
+
+    func testStartSessionInitializesServicesOnDemand() async {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        let (controller, coordinator) = makeUninitializedController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
+        )
+
+        XCTAssertNil(coordinator.transcriptionEngine)
+        XCTAssertNil(coordinator.knowledgeBase)
+
+        controller.startSession(settings: settings)
+
+        XCTAssertNotNil(coordinator.transcriptionEngine)
+        XCTAssertNotNil(coordinator.knowledgeBase)
+
+        for _ in 0..<20 {
+            if coordinator.transcriptionEngine?.isRunning == true { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+
+        XCTAssertTrue(coordinator.transcriptionEngine?.isRunning == true)
+        if case .recording = coordinator.state {
+            // expected
+        } else {
+            XCTFail("Expected recording state after on-demand initialization")
+        }
+    }
+
+    func testInsertScratchpadImagePersistsMarkdownAndImage() async {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        let (controller, coordinator) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings,
+            scripted: [Utterance(text: "Hello", speaker: .you)]
+        )
+
+        controller.startSession(settings: settings)
+
+        var sessionID: String?
+        for _ in 0..<20 {
+            sessionID = await coordinator.sessionRepository.getCurrentSessionID()
+            if sessionID != nil { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+
+        guard let sessionID else {
+            return XCTFail("Expected session ID after starting session")
+        }
+
+        controller.updateScratchpad("Prep observations")
+        controller.insertScratchpadImage(makePNGData())
+        try? await Task.sleep(for: .milliseconds(250))
+
+        let savedScratchpad = await coordinator.sessionRepository.loadScratchpad(sessionID: sessionID)
+        XCTAssertTrue(savedScratchpad.hasPrefix("Prep observations"))
+        XCTAssertTrue(savedScratchpad.contains("![](images/"))
+        XCTAssertEqual(controller.state.scratchpadText, savedScratchpad)
+
+        let imagesDirectory = coordinator.sessionRepository.sessionsDirectoryURL
+            .appendingPathComponent(sessionID, isDirectory: true)
+            .appendingPathComponent("images", isDirectory: true)
+        let imageURLs = (try? FileManager.default.contentsOfDirectory(
+            at: imagesDirectory,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        XCTAssertEqual(imageURLs.count, 1)
+    }
+
+    func testInsertScratchpadImageFilePersistsMarkdownAndImage() async throws {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        let (controller, coordinator) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings,
+            scripted: [Utterance(text: "Hello", speaker: .you)]
+        )
+
+        controller.startSession(settings: settings)
+
+        var sessionID: String?
+        for _ in 0..<20 {
+            sessionID = await coordinator.sessionRepository.getCurrentSessionID()
+            if sessionID != nil { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+
+        guard let sessionID else {
+            return XCTFail("Expected session ID after starting session")
+        }
+
+        let imageURL = dirs.root.appendingPathComponent("clipboard-screenshot.png")
+        try makePNGData().write(to: imageURL)
+
+        controller.updateScratchpad("Prep observations")
+        controller.insertScratchpadAssets([.imageFile(imageURL)])
+        try? await Task.sleep(for: .milliseconds(250))
+
+        let savedScratchpad = await coordinator.sessionRepository.loadScratchpad(sessionID: sessionID)
+        XCTAssertTrue(savedScratchpad.hasPrefix("Prep observations"))
+        XCTAssertTrue(savedScratchpad.contains("![](images/"))
+        XCTAssertEqual(controller.state.scratchpadText, savedScratchpad)
+
+        let imagesDirectory = coordinator.sessionRepository.sessionsDirectoryURL
+            .appendingPathComponent(sessionID, isDirectory: true)
+            .appendingPathComponent("images", isDirectory: true)
+        let imageURLs = (try? FileManager.default.contentsOfDirectory(
+            at: imagesDirectory,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        XCTAssertEqual(imageURLs.count, 1)
+    }
+
+    func testCoordinatorStartProjectsRunningStateBeforeEngineStarts() {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        let (controller, coordinator) = makeUninitializedController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
+        )
+
+        XCTAssertFalse(controller.state.isRunning)
+        XCTAssertNil(coordinator.transcriptionEngine)
+
+        coordinator.handle(.userStarted(.manual()), settings: settings)
+
+        XCTAssertTrue(controller.state.isRunning)
+        XCTAssertEqual(controller.state.sessionPhase, coordinator.state)
+        XCTAssertNil(coordinator.transcriptionEngine)
+    }
+
     func testStopSessionWhileIdleIsNoOp() {
         let dirs = makeTempDirs()
         let settings = makeSettings(notesDirectory: dirs.notes)
@@ -130,7 +453,7 @@ final class LiveSessionControllerTests: XCTestCase {
         XCTAssertEqual(coordinator.state, .idle)
     }
 
-    func testDeepLinkStartRejectedWhenEngineNotReady() {
+    func testDeepLinkStartInitializesServicesOnDemand() {
         let dirs = makeTempDirs()
         let settings = makeSettings(notesDirectory: dirs.notes)
         let transcriptStore = TranscriptStore()
@@ -151,14 +474,19 @@ final class LiveSessionControllerTests: XCTestCase {
         coordinator.liveSessionController = controller
 
         // Queue a start command
-        coordinator.queueExternalCommand(.startSession)
+        coordinator.queueExternalCommand(.startSession())
 
-        // Try handling - should not start because engines are not ready
+        // Try handling - the controller should initialize services on demand.
         controller.handlePendingExternalCommandIfPossible(settings: settings, openNotesWindow: nil)
 
-        // Command should still be pending (not consumed)
-        XCTAssertNotNil(coordinator.pendingExternalCommand)
-        XCTAssertEqual(coordinator.state, .idle)
+        XCTAssertNil(coordinator.pendingExternalCommand)
+        XCTAssertNotNil(coordinator.transcriptionEngine)
+        XCTAssertNotNil(coordinator.knowledgeBase)
+        if case .recording = coordinator.state {
+            // expected
+        } else {
+            XCTFail("Expected .recording state after on-demand deep link start, got \(coordinator.state)")
+        }
     }
 
     func testDeepLinkStopRejectedWhenNotRunning() {
@@ -198,9 +526,519 @@ final class LiveSessionControllerTests: XCTestCase {
 
         XCTAssertTrue(notesOpened)
         XCTAssertNil(coordinator.pendingExternalCommand)
-        XCTAssertEqual(coordinator.requestedSessionSelectionID, "test_session")
+        XCTAssertEqual(coordinator.requestedNotesNavigation?.target, .session("test_session"))
     }
 
+    func testExternalStartSessionSeedsCalendarEventAndScratchpad() async {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        let (controller, coordinator) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings,
+            scripted: [Utterance(text: "Hello", speaker: .you)]
+        )
+        let knowledgeBase = KnowledgeBase(settings: settings)
+        coordinator.setViewServices(
+            knowledgeBase: knowledgeBase,
+            suggestionEngine: SuggestionEngine(
+                transcriptStore: coordinator.transcriptStore,
+                knowledgeBase: knowledgeBase,
+                settings: settings
+            ),
+            sidecastEngine: SidecastEngine(
+                transcriptStore: coordinator.transcriptStore,
+                knowledgeBase: knowledgeBase,
+                settings: settings
+            ),
+            liveSummaryEngine: LiveSummaryEngine(settings: settings)
+        )
+
+        let event = CalendarEvent(
+            id: "evt-123",
+            title: "Payment Ops",
+            startDate: Date(timeIntervalSince1970: 1_700_000_000),
+            endDate: Date(timeIntervalSince1970: 1_700_000_900),
+            organizer: nil,
+            participants: [],
+            isOnlineMeeting: true,
+            meetingURL: URL(string: "https://meet.example.com/payment-ops")
+        )
+
+        coordinator.queueExternalCommand(
+            .startSession(calendarEvent: event, scratchpadSeed: "Talk through merchant fees")
+        )
+
+        controller.handlePendingExternalCommandIfPossible(settings: settings, openNotesWindow: nil)
+
+        for _ in 0..<20 {
+            if coordinator.transcriptionEngine?.isRunning == true { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+
+        let sessionID = await coordinator.sessionRepository.getCurrentSessionID()
+        let savedScratchpad: String?
+        if let sessionID {
+            savedScratchpad = await coordinator.sessionRepository.loadScratchpad(sessionID: sessionID)
+        } else {
+            savedScratchpad = nil
+        }
+
+        if case .recording(let metadata) = coordinator.state {
+            XCTAssertEqual(metadata.calendarEvent?.id, event.id)
+        } else {
+            XCTFail("Expected recording state after external start command")
+        }
+        XCTAssertEqual(controller.state.scratchpadText, "Talk through merchant fees")
+        XCTAssertEqual(savedScratchpad, "Talk through merchant fees")
+        XCTAssertNil(coordinator.pendingExternalCommand)
+    }
+
+    func testFinalizeCurrentSessionAppliesMeetingFamilyFolderPreference() async {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        let (controller, coordinator) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings,
+            scripted: [Utterance(text: "Hello", speaker: .you)]
+        )
+
+        let event = CalendarEvent(
+            id: "evt-folder",
+            title: "Payment Ops",
+            startDate: Date(timeIntervalSince1970: 1_700_000_000),
+            endDate: Date(timeIntervalSince1970: 1_700_000_900),
+            organizer: nil,
+            participants: [],
+            isOnlineMeeting: true,
+            meetingURL: URL(string: "https://meet.example.com/payment-ops")
+        )
+        settings.setMeetingFamilyFolderPreference("Work/Payments", for: event)
+
+        controller.startSession(settings: settings, calendarEventOverride: event)
+
+        var sessionID: String?
+        for _ in 0..<20 {
+            sessionID = await coordinator.sessionRepository.getCurrentSessionID()
+            if sessionID != nil { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+
+        guard let sessionID else {
+            return XCTFail("Expected session ID after starting session")
+        }
+
+        let utterance = Utterance(
+            text: "Follow up on merchant fees",
+            speaker: .you,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        _ = coordinator.transcriptStore.append(utterance)
+
+        controller.stopSession(settings: settings)
+        await controller.finalizeCurrentSession(settings: settings)
+
+        let detail = await coordinator.sessionRepository.loadSession(id: sessionID)
+        XCTAssertEqual(detail.index.folderPath, "Work/Payments")
+    }
+
+    func testFinalizeCurrentSessionCollapsesEmptyGhostSessionIntoRecentRealSession() async {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        let (controller, coordinator) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings,
+            scripted: []
+        )
+
+        let event = CalendarEvent(
+            id: "evt-ghost-merge",
+            title: "Payment Ops / Merchant stand up",
+            startDate: Date(timeIntervalSince1970: 1_700_000_000),
+            endDate: Date(timeIntervalSince1970: 1_700_000_900),
+            organizer: nil,
+            participants: [],
+            isOnlineMeeting: true,
+            meetingURL: URL(string: "https://meet.example.com/payment-ops")
+        )
+
+        let realStartedAt = Date().addingTimeInterval(-180)
+        await coordinator.sessionRepository.seedSession(
+            id: "session_real",
+            records: [SessionRecord(speaker: .you, text: "Real meeting", timestamp: realStartedAt)],
+            startedAt: realStartedAt,
+            endedAt: realStartedAt.addingTimeInterval(120),
+            title: "Payment Ops / Merchant stand up"
+        )
+
+        controller.startSession(settings: settings, calendarEventOverride: event)
+
+        var sessionID: String?
+        for _ in 0..<20 {
+            sessionID = await coordinator.sessionRepository.getCurrentSessionID()
+            if sessionID != nil { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+
+        guard let ghostSessionID = sessionID else {
+            return XCTFail("Expected session ID after starting session")
+        }
+
+        controller.stopSession(settings: settings)
+        await controller.finalizeCurrentSession(settings: settings)
+
+        let sessions = await coordinator.sessionRepository.listSessions()
+        XCTAssertFalse(sessions.contains(where: { $0.id == ghostSessionID }))
+        XCTAssertTrue(sessions.contains(where: { $0.id == "session_real" }))
+        XCTAssertEqual(coordinator.lastEndedSession?.id, "session_real")
+
+        let mergedDetail = await coordinator.sessionRepository.loadSession(id: "session_real")
+        XCTAssertEqual(mergedDetail.calendarEvent?.id, event.id)
+    }
+
+    func testAudioRetentionPlanKeepsRecoveryAudioForCloudLiveTranscription() {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        settings.transcriptionModel = .elevenLabsScribe
+        settings.saveAudioRecording = false
+        settings.enableBatchRetranscription = false
+
+        let startupPlan = LiveSessionController.audioRetentionPlan(settings: settings, utteranceCount: nil)
+        XCTAssertTrue(startupPlan.shouldStartRecorder)
+        XCTAssertFalse(startupPlan.shouldRetainBatchAudio)
+        XCTAssertFalse(startupPlan.shouldExportRecording)
+        XCTAssertFalse(startupPlan.shouldRunRecoveryBatch)
+
+        let recoveryPlan = LiveSessionController.audioRetentionPlan(settings: settings, utteranceCount: 0)
+        XCTAssertTrue(recoveryPlan.shouldStartRecorder)
+        XCTAssertTrue(recoveryPlan.shouldRetainBatchAudio)
+        XCTAssertFalse(recoveryPlan.shouldExportRecording)
+        XCTAssertTrue(recoveryPlan.shouldRunRecoveryBatch)
+    }
+
+    func testAudioRetentionPlanDoesNotForceRecoveryForCloudSessionWithUtterances() {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        settings.transcriptionModel = .assemblyAI
+        settings.saveAudioRecording = false
+        settings.enableBatchRetranscription = false
+
+        let plan = LiveSessionController.audioRetentionPlan(settings: settings, utteranceCount: 4)
+        XCTAssertTrue(plan.shouldStartRecorder)
+        XCTAssertFalse(plan.shouldRetainBatchAudio)
+        XCTAssertFalse(plan.shouldExportRecording)
+        XCTAssertFalse(plan.shouldRunRecoveryBatch)
+    }
+
+    func testAudioRetentionPlanLeavesLocalModelsUntouchedWhenRecordingOptionsAreOff() {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        settings.transcriptionModel = .parakeetV3
+        settings.saveAudioRecording = false
+        settings.enableBatchRetranscription = false
+
+        let plan = LiveSessionController.audioRetentionPlan(settings: settings, utteranceCount: 0)
+        XCTAssertFalse(plan.shouldStartRecorder)
+        XCTAssertFalse(plan.shouldRetainBatchAudio)
+        XCTAssertFalse(plan.shouldExportRecording)
+        XCTAssertFalse(plan.shouldRunRecoveryBatch)
+    }
+
+    func testRecordingHealthNoticeWarnsWhenNoAudioDetected() {
+        let input = LiveSessionController.RecordingHealthInput(
+            elapsed: 6,
+            transcriptionModel: .elevenLabsScribe,
+            utteranceCount: 0,
+            peakAudioLevel: 0,
+            micHasCapturedFrames: false,
+            systemHasCapturedFrames: false,
+            micCaptureError: nil,
+            isMicMuted: false,
+            isRecordingPaused: false,
+            hasBlockingError: false
+        )
+
+        let notice = LiveSessionController.recordingHealthNotice(for: input)
+        XCTAssertEqual(notice?.severity, .warning)
+        XCTAssertEqual(
+            notice?.message,
+            "No microphone or system audio detected. Check your input and output device settings."
+        )
+    }
+
+    func testRecordingHealthNoticeWarnsWhenCloudTranscriptStallsButAudioIsFlowing() {
+        let input = LiveSessionController.RecordingHealthInput(
+            elapsed: 21,
+            transcriptionModel: .elevenLabsScribe,
+            utteranceCount: 0,
+            peakAudioLevel: 0.08,
+            micHasCapturedFrames: true,
+            systemHasCapturedFrames: true,
+            micCaptureError: nil,
+            isMicMuted: false,
+            isRecordingPaused: false,
+            hasBlockingError: false
+        )
+
+        let notice = LiveSessionController.recordingHealthNotice(for: input)
+        XCTAssertEqual(notice?.severity, .warning)
+        XCTAssertEqual(
+            notice?.message,
+            "Capturing audio, but live transcription is not producing text. Recovery batch transcription will run after you stop."
+        )
+    }
+
+    func testRecordingHealthNoticeWarnsWhenLocalTranscriptStallsButAudioIsFlowing() {
+        let input = LiveSessionController.RecordingHealthInput(
+            elapsed: 21,
+            transcriptionModel: .parakeetV3,
+            utteranceCount: 0,
+            peakAudioLevel: 0.08,
+            micHasCapturedFrames: true,
+            systemHasCapturedFrames: true,
+            micCaptureError: nil,
+            isMicMuted: false,
+            isRecordingPaused: false,
+            hasBlockingError: false
+        )
+
+        let notice = LiveSessionController.recordingHealthNotice(for: input)
+        XCTAssertEqual(notice?.severity, .warning)
+        XCTAssertEqual(
+            notice?.message,
+            "Capturing audio, but live transcription is not producing text."
+        )
+    }
+
+    func testRecordingHealthNoticeSuppressesWarningWhenBlockingErrorExists() {
+        let input = LiveSessionController.RecordingHealthInput(
+            elapsed: 30,
+            transcriptionModel: .elevenLabsScribe,
+            utteranceCount: 0,
+            peakAudioLevel: 0.08,
+            micHasCapturedFrames: true,
+            systemHasCapturedFrames: true,
+            micCaptureError: nil,
+            isMicMuted: false,
+            isRecordingPaused: false,
+            hasBlockingError: true
+        )
+
+        XCTAssertNil(LiveSessionController.recordingHealthNotice(for: input))
+    }
+
+    func testTranscriptIssueMarksMissingAudioForExtendedEmptySession() {
+        let input = LiveSessionController.RecordingHealthInput(
+            elapsed: 8,
+            transcriptionModel: .parakeetV3,
+            utteranceCount: 0,
+            peakAudioLevel: 0,
+            micHasCapturedFrames: false,
+            systemHasCapturedFrames: false,
+            micCaptureError: nil,
+            isMicMuted: false,
+            isRecordingPaused: false,
+            hasBlockingError: false
+        )
+
+        XCTAssertEqual(LiveSessionController.transcriptIssue(for: input), .noAudioDetected)
+    }
+
+    func testTranscriptIssueMarksStalledTranscriptionWhenAudioWasCaptured() {
+        let input = LiveSessionController.RecordingHealthInput(
+            elapsed: 12,
+            transcriptionModel: .elevenLabsScribe,
+            utteranceCount: 0,
+            peakAudioLevel: 0.08,
+            micHasCapturedFrames: true,
+            systemHasCapturedFrames: true,
+            micCaptureError: nil,
+            isMicMuted: false,
+            isRecordingPaused: false,
+            hasBlockingError: false
+        )
+
+        XCTAssertEqual(
+            LiveSessionController.transcriptIssue(for: input),
+            .transcriptionProducedNoText
+        )
+    }
+
+    func testTranscriptIssueLeavesIntentionallyEmptySessionUnmarked() {
+        let input = LiveSessionController.RecordingHealthInput(
+            elapsed: 3,
+            transcriptionModel: .parakeetV3,
+            utteranceCount: 0,
+            peakAudioLevel: 0,
+            micHasCapturedFrames: false,
+            systemHasCapturedFrames: false,
+            micCaptureError: nil,
+            isMicMuted: false,
+            isRecordingPaused: false,
+            hasBlockingError: false
+        )
+
+        XCTAssertNil(LiveSessionController.transcriptIssue(for: input))
+    }
+
+    func testLiveTranscriptNoticeExplainsCloudDelay() {
+        let notice = LiveSessionController.liveTranscriptNotice(for: .elevenLabsScribe)
+
+        XCTAssertNotNil(notice)
+        XCTAssertTrue(notice?.contains("Cloud transcript updates") == true)
+        XCTAssertTrue(notice?.contains("10s") == true)
+    }
+
+    func testLiveTranscriptNoticePrefersConcreteCloudIssue() {
+        let issue = CloudTranscriptCopy.Presentation(
+            title: "ElevenLabs API key rejected",
+            detail: "Check Settings > Transcription."
+        )
+
+        XCTAssertEqual(
+            LiveSessionController.liveTranscriptNotice(for: .elevenLabsScribe, issue: issue),
+            "ElevenLabs API key rejected"
+        )
+        XCTAssertEqual(
+            LiveSessionController.liveTranscriptEmptyStateMessage(for: .elevenLabsScribe, issue: issue),
+            "Check Settings > Transcription."
+        )
+    }
+
+    func testLiveTranscriptEmptyStateMessageOnlyAppliesToCloudModels() {
+        XCTAssertNil(LiveSessionController.liveTranscriptEmptyStateMessage(for: .parakeetV3))
+
+        let message = LiveSessionController.liveTranscriptEmptyStateMessage(for: .assemblyAI)
+        XCTAssertNotNil(message)
+        XCTAssertEqual(message, "Waiting for transcript chunk…")
+    }
+
+    func testRecordingElapsedSecondsUsesLifecycleStartTime() {
+        let startedAt = Date().addingTimeInterval(-9.4)
+        let metadata = MeetingMetadata(
+            detectionContext: nil,
+            calendarEvent: nil,
+            title: nil,
+            startedAt: startedAt,
+            endedAt: nil
+        )
+
+        let elapsed = LiveSessionController.recordingElapsedSeconds(for: .recording(metadata))
+
+        XCTAssertGreaterThanOrEqual(elapsed, 9)
+        XCTAssertLessThan(elapsed, 12)
+    }
+
+    func testSyncProjectedStateRefreshesLastEndedSessionWhenSameSessionChanges() {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        let (controller, coordinator) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
+        )
+
+        let failedIndex = SessionIndex(
+            id: "session-1",
+            startedAt: Date(timeIntervalSince1970: 100),
+            endedAt: Date(timeIntervalSince1970: 200),
+            title: "Standup",
+            utteranceCount: 0,
+            hasNotes: false,
+            transcriptIssue: .transcriptionProducedNoText
+        )
+        coordinator.lastEndedSession = failedIndex
+        controller.syncProjectedState(settings: settings)
+        XCTAssertEqual(controller.state.lastEndedSession?.transcriptIssue, .transcriptionProducedNoText)
+
+        var recoveredIndex = failedIndex
+        recoveredIndex.utteranceCount = 3
+        recoveredIndex.transcriptIssue = nil
+        coordinator.lastEndedSession = recoveredIndex
+        controller.syncProjectedState(settings: settings)
+
+        XCTAssertEqual(controller.state.lastEndedSession?.utteranceCount, 3)
+        XCTAssertNil(controller.state.lastEndedSession?.transcriptIssue)
+    }
+
+    func testSyncProjectedStateRefreshesRetranscriptionAvailabilityForLastEndedSession() async throws {
+        let dirs = makeTempDirs()
+        let settings = makeSettings(notesDirectory: dirs.notes)
+        let (controller, coordinator) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
+        )
+
+        let sessionID = "session_retranscribe_available"
+        await coordinator.sessionRepository.seedSession(
+            id: sessionID,
+            records: [],
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            transcriptIssue: .transcriptionProducedNoText
+        )
+
+        let audioDir = coordinator.sessionRepository.sessionsDirectoryURL
+            .appendingPathComponent(sessionID, isDirectory: true)
+            .appendingPathComponent("audio", isDirectory: true)
+        try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
+        try Data("sys".utf8).write(to: audioDir.appendingPathComponent("sys.caf"))
+
+        coordinator.lastEndedSession = await coordinator.sessionRepository.loadSession(id: sessionID).index
+        controller.syncProjectedState(settings: settings)
+        try? await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertTrue(controller.state.lastEndedSessionCanRetranscribe)
+    }
+
+    func testEmptySessionDiagnosticClassificationMarksMissingAudio() {
+        let input = LiveSessionController.RecordingHealthInput(
+            elapsed: 8,
+            transcriptionModel: .parakeetV3,
+            utteranceCount: 0,
+            peakAudioLevel: 0,
+            micHasCapturedFrames: false,
+            systemHasCapturedFrames: false,
+            micCaptureError: nil,
+            isMicMuted: false,
+            isRecordingPaused: false,
+            hasBlockingError: false
+        )
+
+        XCTAssertEqual(
+            LiveSessionController.emptySessionDiagnosticClassification(for: input),
+            .noAudioDetected
+        )
+    }
+
+    func testEmptySessionDiagnosticsMessageIsStructuredJSON() throws {
+        let event = LiveSessionController.EmptySessionDiagnosticsEvent(
+            event: "live_empty_session_finalized",
+            sessionID: "session-123",
+            transcriptionModel: TranscriptionModel.elevenLabsScribe.rawValue,
+            elapsedSeconds: 90,
+            utteranceCount: 0,
+            peakAudioLevel: 0.08,
+            micCapturedFrames: true,
+            systemCapturedFrames: true,
+            micCaptureError: nil,
+            classification: LiveSessionController.EmptySessionDiagnosticClassification.transcriptionProducedNoText.rawValue,
+            retainedRecoveryAudio: true,
+            recoveryBatchAttempted: true,
+            recoveryResult: "queued",
+            finalUtteranceCount: nil,
+            mergedIntoSessionID: nil,
+            failureMessage: nil
+        )
+
+        let message = LiveSessionController.emptySessionDiagnosticsMessage(for: event)
+        let data = try XCTUnwrap(message.data(using: .utf8))
+        let decoded = try JSONDecoder().decode(LiveSessionController.EmptySessionDiagnosticsEvent.self, from: data)
+
+        XCTAssertEqual(decoded, event)
+    }
     func testRunningStateChangeCallbackFires() async {
         let dirs = makeTempDirs()
         let settings = makeSettings(notesDirectory: dirs.notes)
@@ -242,6 +1080,79 @@ final class LiveSessionControllerTests: XCTestCase {
         controller.confirmDownloadAndStart(settings: settings)
 
         XCTAssertTrue(coordinator.transcriptionEngine?.downloadConfirmed ?? false)
+    }
+
+    func testPollingDoesNotReadVoyageKeyWhenKnowledgeBaseFolderUnset() async {
+        let dirs = makeTempDirs()
+        let tracker = SecretLoadTracker()
+        let secretStore = AppSecretStore(
+            loadValue: { key in
+                tracker.loadedKeys.append(key)
+                return key == "voyageApiKey" ? "pa-existing" : nil
+            },
+            saveValue: { _, _ in }
+        )
+        let settings = makeSettings(notesDirectory: dirs.notes, secretStore: secretStore)
+        let (controller, _) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
+        )
+
+        let task = Task {
+            await controller.runPollingLoop(settings: settings)
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+        task.cancel()
+
+        XCTAssertFalse(tracker.loadedKeys.contains("voyageApiKey"))
+    }
+
+    func testPollingDoesNotReadVoyageKeyOnStartupWhenKnowledgeBaseFolderSet() async {
+        let dirs = makeTempDirs()
+        let kbDirectory = dirs.root.appendingPathComponent("KnowledgeBase", isDirectory: true)
+        try? FileManager.default.createDirectory(at: kbDirectory, withIntermediateDirectories: true)
+
+        let tracker = SecretLoadTracker()
+        let secretStore = AppSecretStore(
+            loadValue: { key in
+                tracker.loadedKeys.append(key)
+                return key == "voyageApiKey" ? "pa-existing" : nil
+            },
+            saveValue: { _, _ in }
+        )
+        let settings = makeSettings(notesDirectory: dirs.notes, secretStore: secretStore)
+        settings.kbFolderPath = kbDirectory.path
+        settings.embeddingProvider = .voyageAI
+
+        let (controller, coordinator) = makeController(
+            root: dirs.root,
+            notesDirectory: dirs.notes,
+            settings: settings
+        )
+        let knowledgeBase = KnowledgeBase(settings: settings)
+        coordinator.setViewServices(
+            knowledgeBase: knowledgeBase,
+            suggestionEngine: SuggestionEngine(
+                transcriptStore: coordinator.transcriptStore,
+                knowledgeBase: knowledgeBase,
+                settings: settings
+            ),
+            sidecastEngine: SidecastEngine(
+                transcriptStore: coordinator.transcriptStore,
+                knowledgeBase: knowledgeBase,
+                settings: settings
+            ),
+            liveSummaryEngine: LiveSummaryEngine(settings: settings)
+        )
+
+        let task = Task {
+            await controller.runPollingLoop(settings: settings)
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+        task.cancel()
+
+        XCTAssertFalse(tracker.loadedKeys.contains("voyageApiKey"))
     }
 
     func testFullSessionLifecycle() async {

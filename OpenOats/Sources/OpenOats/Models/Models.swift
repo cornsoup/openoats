@@ -329,7 +329,7 @@ struct MeetingTemplate: Identifiable, Codable, Sendable, Hashable {
     var isBuiltIn: Bool
 }
 
-struct TemplateSnapshot: Codable, Sendable {
+struct TemplateSnapshot: Codable, Sendable, Equatable {
     let id: UUID
     let name: String
     let icon: String
@@ -342,7 +342,101 @@ struct GeneratedNotes: Codable, Sendable {
     let markdown: String
 }
 
-struct SessionIndex: Identifiable, Codable, Sendable {
+struct NoteAttachment: Codable, Sendable, Equatable, Identifiable {
+    let displayName: String
+    let relativePath: String
+    let contentType: String?
+    let byteSize: Int64
+    let createdAt: Date
+
+    var id: String { relativePath }
+}
+
+enum SessionAudioSourceKind: String, Sendable, Hashable {
+    case recording
+    case system
+    case microphone
+
+    var displayName: String {
+        switch self {
+        case .recording:
+            return "Recording"
+        case .system:
+            return "System audio"
+        case .microphone:
+            return "Microphone"
+        }
+    }
+}
+
+struct SessionAudioSource: Identifiable, Sendable, Hashable {
+    let kind: SessionAudioSourceKind
+    let url: URL
+
+    var id: String { "\(kind.rawValue):\(url.path)" }
+    var displayName: String { kind.displayName }
+}
+
+enum SessionTranscriptIssue: String, Codable, Sendable, Equatable {
+    case noAudioDetected
+    case transcriptionProducedNoText
+
+    var listLabel: String {
+        switch self {
+        case .noAudioDetected:
+            return "No audio captured"
+        case .transcriptionProducedNoText:
+            return "Transcription failed"
+        }
+    }
+
+    var emptyStateTitle: String {
+        switch self {
+        case .noAudioDetected:
+            return "No audio captured"
+        case .transcriptionProducedNoText:
+            return "Transcription failed"
+        }
+    }
+
+    var emptyStateMessage: String {
+        switch self {
+        case .noAudioDetected:
+            return "OpenOats did not capture usable microphone or system audio for this session."
+        case .transcriptionProducedNoText:
+            return "OpenOats captured audio for this session, but live transcription did not produce text."
+        }
+    }
+
+    var sessionEndedBannerText: String {
+        switch self {
+        case .noAudioDetected:
+            return "Session ended · No audio captured"
+        case .transcriptionProducedNoText:
+            return "Session ended · Live transcription failed"
+        }
+    }
+}
+
+enum SessionTranscriptRecoveryState: String, Codable, Sendable, Equatable {
+    case recoveredAfterBatch
+
+    var listLabel: String {
+        switch self {
+        case .recoveredAfterBatch:
+            return "Recovered after batch"
+        }
+    }
+
+    var sessionEndedBannerText: String {
+        switch self {
+        case .recoveredAfterBatch:
+            return "Session recovered after batch"
+        }
+    }
+}
+
+struct SessionIndex: Identifiable, Codable, Sendable, Equatable {
     let id: String
     let startedAt: Date
     var endedAt: Date?
@@ -358,8 +452,16 @@ struct SessionIndex: Identifiable, Codable, Sendable {
     var engine: String?
     /// User-assigned tags for session organization.
     var tags: [String]?
+    /// Optional slash-separated folder path used to organize sessions in the Notes UI.
+    var folderPath: String? = nil
     /// How the session was created (nil for live sessions, "imported" for imported audio).
     var source: String?
+    /// Stronger recurring meeting-family key derived from a calendar series identifier when available.
+    var meetingFamilyKey: String? = nil
+    /// Non-nil when the session ended without a transcript for a known recording/transcription reason.
+    var transcriptIssue: SessionTranscriptIssue? = nil
+    /// Non-nil when a previously failed transcript was later recovered.
+    var transcriptRecovery: SessionTranscriptRecoveryState? = nil
 }
 
 struct SessionSidecar: Codable, Sendable {

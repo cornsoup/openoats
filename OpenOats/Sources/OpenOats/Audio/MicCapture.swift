@@ -14,8 +14,9 @@ final class MicCapture: @unchecked Sendable {
     private let _error = SyncString()
     private let _streamContinuation = OSAllocatedUnfairLock<AsyncStream<AVAudioPCMBuffer>.Continuation?>(uncheckedState: nil)
     private let _muted = SyncBool()
+    private let _paused = SyncBool()
 
-    var audioLevel: Float { _muted.value ? 0 : _audioLevel.value }
+    var audioLevel: Float { (_muted.value || _paused.value) ? 0 : _audioLevel.value }
     var hasCapturedFrames: Bool { _hasCapturedFrames.value }
     var captureError: String? { _error.value }
 
@@ -23,6 +24,12 @@ final class MicCapture: @unchecked Sendable {
     var isMuted: Bool {
         get { _muted.value }
         set { _muted.value = newValue }
+    }
+
+    /// When paused, buffers are not forwarded (independent of mute).
+    var isPaused: Bool {
+        get { _paused.value }
+        set { _paused.value = newValue }
     }
 
     /// Set a specific input device by its AudioDeviceID. Pass nil to use system default.
@@ -71,6 +78,8 @@ final class MicCapture: @unchecked Sendable {
                     Log.mic.error("Failed to enable voice processing: \(error, privacy: .public)")
                 }
             }
+
+            engine.prepare()
 
             // Set input device before accessing inputNode format
             var resolvedDeviceID: AudioDeviceID?
@@ -139,6 +148,7 @@ final class MicCapture: @unchecked Sendable {
             Log.mic.info("tapFormat: sr=\(tapFormat.sampleRate, privacy: .public) ch=\(tapFormat.channelCount, privacy: .public)")
 
             let muted = self._muted
+            let paused = self._paused
             var tapCallCount = 0
             inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { buffer, _ in
                 tapCallCount += 1
@@ -150,7 +160,7 @@ final class MicCapture: @unchecked Sendable {
                     Log.mic.debug("tap #\(tapCallCount, privacy: .public): frames=\(buffer.frameLength, privacy: .public) rms=\(rms, privacy: .public) level=\(level.value, privacy: .public)")
                 }
 
-                guard !muted.value else { return }
+                guard !muted.value && !paused.value else { return }
                 continuation.yield(buffer)
             }
             self.hasTapInstalled = true
@@ -319,7 +329,7 @@ final class MicCapture: @unchecked Sendable {
             status = AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &name)
             guard status == noErr, let name else { continue }
 
-            result.append((id: deviceID, name: name.takeRetainedValue() as String))
+            result.append((id: deviceID, name: name.takeUnretainedValue() as String))
         }
 
         return result
@@ -336,7 +346,7 @@ final class MicCapture: @unchecked Sendable {
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &uid)
         guard status == noErr, let uid else { return nil }
-        return uid.takeRetainedValue() as String
+        return uid.takeUnretainedValue() as String
     }
 
     /// Query the nominal sample rate of a CoreAudio device directly from hardware.

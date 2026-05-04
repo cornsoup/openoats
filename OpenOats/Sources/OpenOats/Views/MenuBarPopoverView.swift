@@ -3,8 +3,10 @@ import SwiftUI
 struct MenuBarPopoverView: View {
     let coordinator: AppCoordinator
     let settings: AppSettings
+    let onToggleMeeting: () -> Void
     let onShowMainWindow: () -> Void
     let onCheckForUpdates: () -> Void
+    let onShowSettings: () -> Void
     let onQuit: () -> Void
 
     @State private var elapsedSeconds: Int = 0
@@ -52,9 +54,7 @@ struct MenuBarPopoverView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 
-            Button(action: {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            }) {
+            Button(action: onShowSettings) {
                 HStack {
                     Text("Settings…")
                     Spacer()
@@ -126,15 +126,12 @@ struct MenuBarPopoverView: View {
     @ViewBuilder
     private var primaryAction: some View {
         if coordinator.isRecording {
-            Button(action: {
-                coordinator.handle(.userStopped, settings: settings)
-            }) {
+            Button(action: onToggleMeeting) {
                 Text("Stop Recording")
                     .font(.system(size: 13, weight: .medium))
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
+            .buttonStyle(OpenOatsProminentButtonStyle(color: .red))
             .controlSize(.regular)
         } else {
             Button(action: {
@@ -142,13 +139,13 @@ struct MenuBarPopoverView: View {
                     onShowMainWindow()
                     return
                 }
-                coordinator.handle(.userStarted(.manual()), settings: settings)
+                onToggleMeeting()
             }) {
                 Text("Start Recording")
                     .font(.system(size: 13, weight: .medium))
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(OpenOatsProminentButtonStyle())
             .controlSize(.regular)
         }
     }

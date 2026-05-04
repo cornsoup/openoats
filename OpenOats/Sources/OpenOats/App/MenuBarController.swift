@@ -8,7 +8,9 @@ final class MenuBarController {
     private let popover: NSPopover
     private let coordinator: AppCoordinator
     private let settings: AppSettings
+    private let onToggleMeeting: () -> Void
     private var iconUpdateTask: Task<Void, Never>?
+    private var hasConfiguredButton = false
 
     var onShowMainWindow: (() -> Void)?
     var onQuitApp: (() -> Void)?
@@ -16,10 +18,12 @@ final class MenuBarController {
     init(
         coordinator: AppCoordinator,
         settings: AppSettings,
-        onCheckForUpdates: @escaping () -> Void
+        onCheckForUpdates: @escaping () -> Void,
+        onToggleMeeting: @escaping () -> Void
     ) {
         self.coordinator = coordinator
         self.settings = settings
+        self.onToggleMeeting = onToggleMeeting
 
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         self.popover = NSPopover()
@@ -30,6 +34,7 @@ final class MenuBarController {
         let popoverView = MenuBarPopoverView(
             coordinator: coordinator,
             settings: settings,
+            onToggleMeeting: onToggleMeeting,
             onShowMainWindow: { [weak self] in
                 self?.popover.performClose(nil)
                 self?.onShowMainWindow?()
@@ -38,6 +43,11 @@ final class MenuBarController {
                 self?.popover.performClose(nil)
                 onCheckForUpdates()
             },
+            onShowSettings: { [weak self] in
+                self?.popover.performClose(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            },
             onQuit: { [weak self] in
                 self?.popover.performClose(nil)
                 self?.onQuitApp?()
@@ -45,12 +55,7 @@ final class MenuBarController {
         )
         popover.contentViewController = NSHostingController(rootView: popoverView)
 
-        if let button = statusItem.button {
-            button.image = Self.makeConcentricCirclesIcon(filled: false)
-            button.image?.isTemplate = true
-            button.target = self
-            button.action = #selector(togglePopover(_:))
-        }
+        refreshStatusItem()
 
         startIconObservation()
     }
@@ -84,8 +89,28 @@ final class MenuBarController {
     }
 
     private func updateIcon() {
+        refreshStatusItem()
         statusItem.button?.image = Self.makeConcentricCirclesIcon(filled: coordinator.isRecording)
         statusItem.button?.image?.isTemplate = true
+    }
+
+    func refreshStatusItem() {
+        guard let button = statusItem.button else {
+            DiagnosticsSupport.record(category: "menu", message: "Status item button unavailable")
+            return
+        }
+
+        if !hasConfiguredButton {
+            button.target = self
+            button.action = #selector(togglePopover(_:))
+            hasConfiguredButton = true
+            DiagnosticsSupport.record(category: "menu", message: "Status item button configured")
+        }
+
+        if button.image == nil {
+            button.image = Self.makeConcentricCirclesIcon(filled: coordinator.isRecording)
+            button.image?.isTemplate = true
+        }
     }
 
     private static func makeConcentricCirclesIcon(filled: Bool) -> NSImage {

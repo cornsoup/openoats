@@ -1,13 +1,12 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     private enum ControlBarAction {
         case toggle
         case confirmDownload
     }
-
-    private let compactHeaderVerticalPadding: CGFloat = 10
 
     @Bindable var settings: AppSettings
     @Environment(AppContainer.self) private var container
@@ -21,7 +20,6 @@ struct ContentView: View {
     @State private var showOnboarding = false
     @State private var showConsentSheet = false
     @State private var pendingControlBarAction: ControlBarAction?
-    @State private var windowChromeTopInset: CGFloat = 0
 
     var body: some View {
         bodyWithModifiers
@@ -37,14 +35,6 @@ struct ContentView: View {
                     .font(.system(size: 13, weight: .semibold))
 
                 Spacer()
-
-                // KB indexing status (subtle, read-only)
-                if !controllerState.kbIndexingProgress.isEmpty {
-                    Text(controllerState.kbIndexingProgress)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
 
                 Button {
                     openWindow(id: "notes")
@@ -75,94 +65,37 @@ struct ContentView: View {
                 .accessibilityIdentifier("app.settingsButton")
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, compactHeaderVerticalPadding)
+            .padding(.vertical, 10)
 
             Divider()
 
             // Post-session banner
-            if let lastSession = controllerState.lastEndedSession, lastSession.utteranceCount > 0 {
-                HStack {
-                    Text("Session ended \u{00B7} \(lastSession.utteranceCount) utterances")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("app.sessionEndedBanner")
-                    Spacer()
-                    if controllerState.lastSessionHasNotes {
-                        Button {
-                            openWindow(id: "notes")
-                        } label: {
-                            Label("View Notes", systemImage: "doc.text")
-                                .font(.system(size: 12))
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .accessibilityIdentifier("app.viewNotesButton")
-                    } else {
-                        Button {
-                            openWindow(id: "notes")
-                        } label: {
-                            Label("Generate Notes", systemImage: "sparkles")
-                                .font(.system(size: 12))
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .accessibilityIdentifier("app.generateNotesButton")
+            if let lastSession = controllerState.lastEndedSession {
+                PostSessionBanner(
+                    session: lastSession,
+                    lastSessionHasNotes: controllerState.lastSessionHasNotes,
+                    canRetranscribe: controllerState.lastEndedSessionCanRetranscribe,
+                    recoveryIsPending: coordinator.pendingRecoverySessionID == lastSession.id,
+                    onOpenTranscript: {
+                        coordinator.queueTranscriptSessionSelection(lastSession.id)
+                        openWindow(id: "notes")
+                    },
+                    onOpenNotes: {
+                        coordinator.queueSessionSelection(lastSession.id)
+                        openWindow(id: "notes")
+                    },
+                    onGenerateNotes: {
+                        openWindow(id: "notes")
+                    },
+                    onRetranscribe: {
+                        coordinator.queueSessionRetranscription(lastSession.id)
+                        openWindow(id: "notes")
                     }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(.ultraThinMaterial)
-
-                Divider()
+                )
             }
 
-            // Batch transcription / import progress banner
-            if case .transcribing(let progress) = controllerState.batchStatus {
-                HStack(spacing: 8) {
-                    ProgressView(value: progress, total: 1.0)
-                        .progressViewStyle(.linear)
-                        .frame(maxWidth: .infinity)
-                    Text(controllerState.batchIsImporting
-                         ? "Importing meeting recording… \(Int(progress * 100))%"
-                         : "Re-transcribing... \(Int(progress * 100))%")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial)
-
-                Divider()
-            } else if case .loading = controllerState.batchStatus {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(controllerState.batchIsImporting
-                         ? "Preparing to import…"
-                         : "Loading batch model...")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial)
-
-                Divider()
-            } else if case .completed = controllerState.batchStatus {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.system(size: 12))
-                    Text(controllerState.batchIsImporting
-                         ? "Meeting recording imported"
-                         : "Re-transcription complete")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial)
+            if controllerState.isRunning, let event = controllerState.matchedCalendarEvent {
+                MatchedCalendarEventBanner(event: event)
 
                 Divider()
             }
@@ -213,7 +146,10 @@ struct ContentView: View {
                     text: Binding(
                         get: { controllerState.scratchpadText },
                         set: { liveSessionController?.updateScratchpad($0) }
-                    )
+                    ),
+                    onPasteAssetProviders: { providers in
+                        handleScratchpadAssetPaste(providers)
+                    }
                 )
             }
 
@@ -228,12 +164,20 @@ struct ContentView: View {
                 onMuteToggle: {
                     liveSessionController?.toggleMicMute()
                 },
+                onPauseToggle: {
+                    liveSessionController?.toggleRecordingPause()
+                },
                 onConfirmDownload: {
                     pendingControlBarAction = .confirmDownload
+                },
+                onOpenSettings: {
+                    openSettingsWindow()
+                },
+                onOpenMicrophonePrivacySettings: {
+                    openMicrophonePrivacySettings()
                 }
             )
         }
-        .padding(.top, max(windowChromeTopInset - compactHeaderVerticalPadding, 0))
     }
 
     private var bodyWithModifiers: some View {
@@ -242,9 +186,6 @@ struct ContentView: View {
 
     private var sizedRootContent: some View {
         rootContent
-            .background {
-                WindowChromeTopInsetReader(topInset: $windowChromeTopInset)
-            }
             .frame(minWidth: 360, minHeight: 400)
             .background(.ultraThinMaterial)
     }
@@ -285,9 +226,6 @@ struct ContentView: View {
             if !hasCompletedOnboarding {
                 showOnboarding = true
             }
-            if coordinator.knowledgeBase == nil {
-                container.ensureServicesInitialized(settings: settings, coordinator: coordinator)
-            }
 
             // Create and wire the controller
             let controller = LiveSessionController(coordinator: coordinator, container: container)
@@ -326,7 +264,7 @@ struct ContentView: View {
             overlayManager.defaults = container.defaults
             miniBarManager.defaults = container.defaults
             await container.seedIfNeeded(coordinator: coordinator)
-            controller.indexKBIfNeeded(settings: settings)
+            await coordinator.loadHistory()
             controller.handlePendingExternalCommandIfPossible(settings: settings) {
                 openWindow(id: "notes")
             }
@@ -404,6 +342,19 @@ struct ContentView: View {
         liveSessionController?.stopSession(settings: settings)
     }
 
+    private func openSettingsWindow() {
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+
+    private func openMicrophonePrivacySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        ) else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
     private func showMiniBar(controller: LiveSessionController?, miniBarManager: MiniBarManager?) {
         guard let controller, let miniBarManager else { return }
         miniBarManager.update(
@@ -447,6 +398,78 @@ struct ContentView: View {
         NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
     }
 
+    private func handleScratchpadAssetPaste(_ providers: [NSItemProvider]) {
+        guard liveSessionController?.state.isRunning == true else { return }
+
+        Task {
+            let assets = await loadPastedScratchpadAssets(from: providers)
+            guard !assets.isEmpty else { return }
+            await MainActor.run {
+                liveSessionController?.insertScratchpadAssets(assets)
+            }
+        }
+    }
+
+    private func loadPastedScratchpadAssets(
+        from providers: [NSItemProvider]
+    ) async -> [LiveSessionController.ScratchpadAssetInsertion] {
+        var assets: [LiveSessionController.ScratchpadAssetInsertion] = []
+
+        for provider in providers {
+            if let fileURL = await loadPastedFileURL(from: provider) {
+                if LiveSessionController.isImageFile(url: fileURL) {
+                    assets.append(.imageFile(fileURL))
+                } else {
+                    assets.append(.attachmentFile(fileURL))
+                }
+                continue
+            }
+            if let imageData = await loadPastedImageData(from: provider) {
+                assets.append(.imageData(imageData))
+            }
+        }
+
+        return assets
+    }
+
+    private func loadPastedFileURL(from provider: NSItemProvider) async -> URL? {
+        guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else {
+            return nil
+        }
+
+        return await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                let resolvedURL: URL?
+                switch item {
+                case let url as URL:
+                    resolvedURL = url
+                case let data as Data:
+                    resolvedURL = NSURL(absoluteURLWithDataRepresentation: data, relativeTo: nil) as URL?
+                case let string as String:
+                    resolvedURL = URL(string: string)
+                default:
+                    resolvedURL = nil
+                }
+                continuation.resume(returning: resolvedURL)
+            }
+        }
+    }
+
+    private func loadPastedImageData(from provider: NSItemProvider) async -> Data? {
+        for identifier in [UTType.png.identifier, UTType.jpeg.identifier, UTType.tiff.identifier, UTType.image.identifier] {
+            guard provider.hasItemConformingToTypeIdentifier(identifier) else { continue }
+            let data = await withCheckedContinuation { continuation in
+                provider.loadDataRepresentation(forTypeIdentifier: identifier) { data, _ in
+                    continuation.resume(returning: data)
+                }
+            }
+            if data != nil {
+                return data
+            }
+        }
+        return nil
+    }
+
     @MainActor
     private func handleControlBarAction(_ action: ControlBarAction) {
         switch action {
@@ -460,37 +483,138 @@ struct ContentView: View {
             liveSessionController?.downloadModelOnly(settings: settings)
         }
     }
-}
 
-private struct WindowChromeTopInsetReader: NSViewRepresentable {
-    @Binding var topInset: CGFloat
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        updateTopInset(for: view)
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        updateTopInset(for: nsView)
-    }
-
-    private func updateTopInset(for view: NSView) {
-        let binding = _topInset
-        DispatchQueue.main.async { [weak view] in
-            guard let window = view?.window else { return }
-            let chromeHeight = max(window.frame.height - window.contentLayoutRect.height, 0)
-            guard abs(binding.wrappedValue - chromeHeight) > 0.5 else { return }
-            binding.wrappedValue = chromeHeight
-        }
-    }
 }
 
 // MARK: - Scratchpad Section
 
+private struct PostSessionBanner: View {
+    let session: SessionIndex
+    let lastSessionHasNotes: Bool
+    let canRetranscribe: Bool
+    let recoveryIsPending: Bool
+    let onOpenTranscript: () -> Void
+    let onOpenNotes: () -> Void
+    let onGenerateNotes: () -> Void
+    let onRetranscribe: () -> Void
+
+    @ViewBuilder
+    var body: some View {
+        if session.utteranceCount > 0 {
+            successfulSessionBanner
+        } else if let transcriptIssue = session.transcriptIssue {
+            failedSessionBanner(transcriptIssue: transcriptIssue)
+        }
+    }
+
+    private var successfulSessionBanner: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(sessionEndedBannerText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("app.sessionEndedBanner")
+                Spacer()
+                if session.transcriptRecovery != nil {
+                    Button(action: onOpenTranscript) {
+                        Label("Open Transcript", systemImage: "text.quote")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(OpenOatsProminentButtonStyle())
+                    .controlSize(.small)
+                    .accessibilityIdentifier("app.openTranscriptButton")
+
+                    if lastSessionHasNotes {
+                        Button(action: onOpenNotes) {
+                            Label("View Notes", systemImage: "doc.text")
+                                .font(.system(size: 12))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("app.viewNotesButton")
+                    }
+                } else if lastSessionHasNotes {
+                    Button(action: onOpenNotes) {
+                        Label("View Notes", systemImage: "doc.text")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("app.viewNotesButton")
+                } else {
+                    Button(action: onGenerateNotes) {
+                        Label("Generate Notes", systemImage: "sparkles")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(OpenOatsProminentButtonStyle())
+                    .controlSize(.small)
+                    .accessibilityIdentifier("app.generateNotesButton")
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+
+            Divider()
+        }
+    }
+
+    private func failedSessionBanner(transcriptIssue: SessionTranscriptIssue) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+
+                Text(transcriptIssue.sessionEndedBannerText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("app.sessionEndedBanner")
+                Spacer()
+                if recoveryIsPending {
+                    Text("Recovery queued")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("app.recoveryQueuedLabel")
+                } else if canRetranscribe {
+                    Button(action: onRetranscribe) {
+                        Label("Re-transcribe", systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(OpenOatsProminentButtonStyle())
+                    .controlSize(.small)
+                    .accessibilityIdentifier("app.retranscribeSessionButton")
+                }
+                Button(action: onOpenTranscript) {
+                    Label("Open Transcript", systemImage: "text.quote")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityIdentifier("app.openTranscriptButton")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+
+            Divider()
+        }
+    }
+
+    private var sessionEndedBannerText: String {
+        if let recovery = session.transcriptRecovery {
+            return "\(recovery.sessionEndedBannerText) \u{00B7} \(session.utteranceCount) utterances"
+        }
+        return "Session ended \u{00B7} \(session.utteranceCount) utterances"
+    }
+}
+
 private struct ScratchpadSection: View {
     @Binding var text: String
+    let onPasteAssetProviders: ([NSItemProvider]) -> Void
     @AppStorage("isScratchpadExpanded") private var isExpanded = true
+
+    private let pasteAssetTypes: [UTType] = [.png, .jpeg, .tiff, .image, .fileURL]
 
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
@@ -501,6 +625,9 @@ private struct ScratchpadSection: View {
                 .padding(4)
                 .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
+                .onPasteCommand(of: pasteAssetTypes) { providers in
+                    onPasteAssetProviders(providers)
+                }
         } label: {
             HStack(spacing: 6) {
                 Text("My Notes")
@@ -524,23 +651,35 @@ private struct IsolatedControlBarWrapper: View {
     let state: LiveSessionState
     let onToggle: () -> Void
     let onMuteToggle: () -> Void
+    let onPauseToggle: () -> Void
     let onConfirmDownload: () -> Void
-    
+    let onOpenSettings: () -> Void
+    let onOpenMicrophonePrivacySettings: () -> Void
+
     var body: some View {
         ControlBar(
             isRunning: state.isRunning,
             audioLevel: state.audioLevel,
+            recordingElapsedSeconds: state.recordingElapsedSeconds,
             isMicMuted: state.isMicMuted,
+            isRecordingPaused: state.isRecordingPaused,
             modelDisplayName: state.modelDisplayName,
             transcriptionPrompt: state.transcriptionPrompt,
+            batchStatus: state.batchStatus,
+            batchIsImporting: state.batchIsImporting,
+            kbIndexingStatus: state.kbIndexingStatus,
             statusMessage: state.statusMessage,
             errorMessage: state.errorMessage,
+            recordingHealthNotice: state.recordingHealthNotice,
             needsDownload: state.needsDownload,
             downloadProgress: state.downloadProgress,
             downloadDetail: state.downloadDetail,
             onToggle: onToggle,
             onMuteToggle: onMuteToggle,
-            onConfirmDownload: onConfirmDownload
+            onPauseToggle: onPauseToggle,
+            onConfirmDownload: onConfirmDownload,
+            onOpenSettings: onOpenSettings,
+            onOpenMicrophonePrivacySettings: onOpenMicrophonePrivacySettings
         )
     }
 }
