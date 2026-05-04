@@ -7,12 +7,13 @@ import SwiftUI
 /// - Click-to-focus: tapping inside the content area sets `focusedPane.focused = paneID`.
 /// - A thin accent-colored border around the content when this pane is focused.
 /// - Collapsed state hides content, leaving only the header row visible.
-struct PaneShell<Content: View>: View {
+struct PaneShell<Content: View, HeaderExtras: View>: View {
     let title: String
     let badge: String?
     let paneID: PaneID
     @Binding var isCollapsed: Bool
     @Bindable var focusedPane: FocusedPaneStore
+    let headerExtras: () -> HeaderExtras
     let content: () -> Content
 
     init(
@@ -21,6 +22,7 @@ struct PaneShell<Content: View>: View {
         paneID: PaneID,
         isCollapsed: Binding<Bool>,
         focusedPane: FocusedPaneStore,
+        @ViewBuilder headerExtras: @escaping () -> HeaderExtras = { Spacer() },
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
@@ -28,6 +30,7 @@ struct PaneShell<Content: View>: View {
         self.paneID = paneID
         self._isCollapsed = isCollapsed
         self.focusedPane = focusedPane
+        self.headerExtras = headerExtras
         self.content = content
     }
 
@@ -68,7 +71,7 @@ struct PaneShell<Content: View>: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
             }
-            Spacer()
+            headerExtras()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
