@@ -53,11 +53,15 @@ struct NotesFolderDefinition: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
     var path: String
     var color: NotesFolderColor
+    /// Optional spelling-glossary additions specific to meetings filed in
+    /// this folder. One term per line. Empty for folders with no additions.
+    var glossary: String
 
-    init(id: UUID = UUID(), path: String, color: NotesFolderColor) {
+    init(id: UUID = UUID(), path: String, color: NotesFolderColor, glossary: String = "") {
         self.id = id
         self.path = Self.normalizePath(path) ?? path
         self.color = color
+        self.glossary = glossary
     }
 
     var displayName: String {

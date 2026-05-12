@@ -11,6 +11,7 @@ struct FolderEditorSheetView: View {
     let subtitle: String
     @Binding var newFolderPath: String
     @Binding var newFolderColor: NotesFolderColor
+    @Binding var newFolderGlossary: String
     @FocusState.Binding var newFolderFieldFocused: Bool
     let saveDisabled: Bool
     let onSave: () -> Void
@@ -68,6 +69,25 @@ struct FolderEditorSheetView: View {
                     }
                 }
             }
+
+            DisclosureGroup("Spelling additions for this folder (optional)") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Names and terms specific to meetings filed here. These add to your global Spelling Glossary.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    TextEditor(text: $newFolderGlossary)
+                        .font(.system(size: 11, design: .monospaced))
+                        .frame(minHeight: 70, maxHeight: 140)
+                        .scrollContentBackground(.hidden)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(.quaternary)
+                        )
+                }
+                .padding(.top, 4)
+            }
+            .font(.system(size: 12))
 
             HStack {
                 Spacer()

@@ -52,6 +52,7 @@ struct NotesDetailView: View {
     @State private var pendingMeetingFamilyFolderChange: PendingMeetingFamilyFolderChange?
     @State private var meetingFamilyNewFolderPath: String = ""
     @State private var meetingFamilyNewFolderColor: NotesFolderColor = .orange
+    @State private var meetingFamilyNewFolderGlossary: String = ""
     @FocusState private var meetingFamilyNewFolderFieldFocused: Bool
 
     // MARK: - Session-level new folder sheet state (for detail-side folderAssignmentMenu)
@@ -59,6 +60,7 @@ struct NotesDetailView: View {
     @State private var creatingFolderForSessionID: String?
     @State private var sessionNewFolderPath: String = ""
     @State private var sessionNewFolderColor: NotesFolderColor = .orange
+    @State private var sessionNewFolderGlossary: String = ""
     @FocusState private var sessionNewFolderFieldFocused: Bool
 
     private struct PendingMeetingFamilyFolderChange: Equatable {
@@ -2791,6 +2793,7 @@ struct NotesDetailView: View {
                     subtitle: "Use a top-level folder and at most one subfolder, like `Work` or `Work/1:1s`.",
                     newFolderPath: $meetingFamilyNewFolderPath,
                     newFolderColor: $meetingFamilyNewFolderColor,
+                    newFolderGlossary: $meetingFamilyNewFolderGlossary,
                     newFolderFieldFocused: $meetingFamilyNewFolderFieldFocused,
                     saveDisabled: normalizedMeetingFamilyFolderPath(meetingFamilyNewFolderPath) == nil,
                     onSave: {
@@ -2828,7 +2831,7 @@ struct NotesDetailView: View {
         if let existingIndex = folders.firstIndex(where: { $0.path.caseInsensitiveCompare(normalizedPath) == .orderedSame }) {
             folders[existingIndex].color = meetingFamilyNewFolderColor
         } else {
-            folders.append(NotesFolderDefinition(path: normalizedPath, color: meetingFamilyNewFolderColor))
+            folders.append(NotesFolderDefinition(path: normalizedPath, color: meetingFamilyNewFolderColor, glossary: meetingFamilyNewFolderGlossary))
         }
         settings.notesFolders = folders
         cancelCreateMeetingFamilyFolder()
@@ -2844,6 +2847,7 @@ struct NotesDetailView: View {
         meetingFamilyNewFolderFieldFocused = false
         meetingFamilyNewFolderPath = ""
         meetingFamilyNewFolderColor = .orange
+        meetingFamilyNewFolderGlossary = ""
     }
 
     private func folderDefinition(for folderPath: String?) -> NotesFolderDefinition? {
@@ -2953,6 +2957,7 @@ struct NotesDetailView: View {
             subtitle: "Use `/` to create subfolders inside your Notes list.",
             newFolderPath: $sessionNewFolderPath,
             newFolderColor: $sessionNewFolderColor,
+            newFolderGlossary: $sessionNewFolderGlossary,
             newFolderFieldFocused: $sessionNewFolderFieldFocused,
             saveDisabled: NotesFolderDefinition.normalizePath(sessionNewFolderPath) == nil,
             onSave: { commitCreateSessionFolder(sessionID: sessionID) },
@@ -2973,7 +2978,7 @@ struct NotesDetailView: View {
         if let existingIndex = folders.firstIndex(where: { $0.path.caseInsensitiveCompare(normalizedPath) == .orderedSame }) {
             folders[existingIndex].color = sessionNewFolderColor
         } else {
-            folders.append(NotesFolderDefinition(path: normalizedPath, color: sessionNewFolderColor))
+            folders.append(NotesFolderDefinition(path: normalizedPath, color: sessionNewFolderColor, glossary: sessionNewFolderGlossary))
         }
         settings.notesFolders = folders
         controller.updateSessionFolder(sessionID: sessionID, folderPath: normalizedPath)
@@ -2985,5 +2990,6 @@ struct NotesDetailView: View {
         sessionNewFolderFieldFocused = false
         sessionNewFolderPath = ""
         sessionNewFolderColor = .orange
+        sessionNewFolderGlossary = ""
     }
 }

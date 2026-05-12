@@ -497,7 +497,7 @@ private struct TranscriptionSettingsTab: View {
                         .foregroundStyle(.secondary)
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Custom Keywords")
+                        Text("Spelling Glossary")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
 
@@ -523,7 +523,7 @@ private struct TranscriptionSettingsTab: View {
                         )
 
                         Text(
-                            "Boost meeting-specific jargon, names, and product terms. Enter one term per line, or use `Preferred Term: alias one, alias two`. Parakeet: full alias support. AssemblyAI: aliases map to custom spelling. ElevenLabs: terms boost recognition."
+                            "Names, companies, and proper nouns the transcription model often mis-spells. Enter one term per line, or use `Preferred Term: alias one, alias two`. Applied at three layers: cloud transcription bias (ElevenLabs, AssemblyAI), live transcript cleanup, and post-session batch cleanup."
                         )
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)

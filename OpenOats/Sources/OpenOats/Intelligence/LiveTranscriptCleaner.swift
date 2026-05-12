@@ -16,7 +16,7 @@ actor LiveTranscriptCleaner {
     private let cleanupModel = "openai/gpt-4o-mini"
     private let minimumWordCount = 5
 
-    private let systemPrompt = """
+    private let baseSystemPrompt = """
         Clean up this speech transcript: remove filler words (uh, um, like, you know), \
         fix punctuation, add sentence breaks. Output only the cleaned text.
         """
@@ -136,8 +136,13 @@ actor LiveTranscriptCleaner {
             model = openAILLMModelName
         }
 
+        // Resolve the system prompt with the user's spelling glossary appended.
+        let globalGlossary = await MainActor.run { settings.transcriptionCustomVocabulary }
+        let glossaryTerms = SpellingGlossary.terms(global: globalGlossary, folderGlossary: nil)
+        let resolvedSystemPrompt = baseSystemPrompt + SpellingGlossary.promptBlock(terms: glossaryTerms)
+
         let messages: [OpenRouterClient.Message] = [
-            .init(role: "system", content: systemPrompt),
+            .init(role: "system", content: resolvedSystemPrompt),
             .init(role: "user", content: utterance.text)
         ]
 

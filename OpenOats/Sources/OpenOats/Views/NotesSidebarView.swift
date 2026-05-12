@@ -25,6 +25,7 @@ struct NotesSidebarView: View {
     @State private var creatingFolderForSessionID: String?
     @State private var newFolderPath: String = ""
     @State private var newFolderColor: NotesFolderColor = .orange
+    @State private var newFolderGlossary: String = ""
     @FocusState private var newFolderFieldFocused: Bool
 
     // MARK: - Delete state
@@ -395,6 +396,7 @@ struct NotesSidebarView: View {
             subtitle: "Use `/` to create subfolders inside your Notes list.",
             newFolderPath: $newFolderPath,
             newFolderColor: $newFolderColor,
+            newFolderGlossary: $newFolderGlossary,
             newFolderFieldFocused: $newFolderFieldFocused,
             saveDisabled: NotesFolderDefinition.normalizePath(newFolderPath) == nil,
             onSave: { commitCreateFolder(controller: controller, sessionID: sessionID) },
@@ -469,7 +471,7 @@ struct NotesSidebarView: View {
         if let existingIndex = folders.firstIndex(where: { $0.path.caseInsensitiveCompare(normalizedPath) == .orderedSame }) {
             folders[existingIndex].color = newFolderColor
         } else {
-            folders.append(NotesFolderDefinition(path: normalizedPath, color: newFolderColor))
+            folders.append(NotesFolderDefinition(path: normalizedPath, color: newFolderColor, glossary: newFolderGlossary))
         }
         settings.notesFolders = folders
         controller.updateSessionFolder(sessionID: sessionID, folderPath: normalizedPath)
@@ -481,6 +483,7 @@ struct NotesSidebarView: View {
         newFolderFieldFocused = false
         newFolderPath = ""
         newFolderColor = .orange
+        newFolderGlossary = ""
     }
 
     private func sessionTitle(for session: SessionIndex) -> String {

@@ -806,9 +806,25 @@ final class NotesController {
         guard let sessionID = state.selectedSessionID, !state.loadedTranscript.isEmpty else { return }
 
         Task {
+            // Resolve the session's folder glossary (if the session is filed in a folder).
+            let folderGlossary: String? = {
+                guard let sessionID = state.selectedSessionID,
+                      let session = state.sessionHistory.first(where: { $0.id == sessionID }),
+                      let folderPath = session.folderPath,
+                      let folder = settings.notesFolders.first(where: { $0.path == folderPath })
+                else { return nil }
+                return folder.glossary
+            }()
+
+            let glossaryTerms = SpellingGlossary.terms(
+                global: settings.transcriptionCustomVocabulary,
+                folderGlossary: folderGlossary
+            )
+
             let updated = await coordinator.batchTextCleaner.cleanup(
                 records: state.loadedTranscript,
-                settings: settings
+                settings: settings,
+                glossaryTerms: glossaryTerms
             )
 
             let utterances = updated.map { record in

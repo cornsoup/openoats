@@ -34,7 +34,7 @@ final class BatchTextCleaner {
     private var currentTask: Task<[SessionRecord], Never>?
 
     /// The system prompt instructing the LLM how to clean up transcripts.
-    private nonisolated static let systemPrompt = """
+    private nonisolated static let baseSystemPrompt = """
         You are a transcript cleanup assistant. Your job is to clean up raw speech-to-text output.
 
         Rules:
@@ -48,9 +48,19 @@ final class BatchTextCleaner {
         - Do not add any commentary, explanation, or extra text.
         """
 
+    /// Builds the system prompt with the resolved spelling glossary appended
+    /// (empty append when there are no terms).
+    private nonisolated static func makeSystemPrompt(glossaryTerms: [String]) -> String {
+        baseSystemPrompt + SpellingGlossary.promptBlock(terms: glossaryTerms)
+    }
+
     /// Chunks records into time-based blocks and sends each to an LLM for cleanup.
     /// Returns a new array of `SessionRecord` with `cleanedText` populated.
-    func cleanup(records: [SessionRecord], settings: AppSettings) async -> [SessionRecord] {
+    func cleanup(
+        records: [SessionRecord],
+        settings: AppSettings,
+        glossaryTerms: [String] = []
+    ) async -> [SessionRecord] {
         currentTask?.cancel()
         isCleaningUp = true
         chunksCompleted = 0
@@ -96,8 +106,9 @@ final class BatchTextCleaner {
 
         let chunks = Self.chunkRecords(records)
         totalChunks = chunks.count
+        let resolvedSystemPrompt = Self.makeSystemPrompt(glossaryTerms: glossaryTerms)
 
-        let task = Task { [weak self, client, apiKey, baseURL, model] () -> [SessionRecord] in
+        let task = Task { [weak self, client, apiKey, baseURL, model, resolvedSystemPrompt] () -> [SessionRecord] in
             // Process chunks concurrently (up to 3 at a time) off the main actor.
             let results: [(index: Int, records: [SessionRecord]?)] = await withTaskGroup(
                 of: (Int, [SessionRecord]?).self,
@@ -123,7 +134,8 @@ final class BatchTextCleaner {
                             client: client,
                             apiKey: apiKey,
                             model: model,
-                            baseURL: baseURL
+                            baseURL: baseURL,
+                            systemPrompt: resolvedSystemPrompt
                         )
                         return (chunkIndex, cleaned)
                     }
@@ -226,7 +238,8 @@ final class BatchTextCleaner {
         client: OpenRouterClient,
         apiKey: String?,
         model: String,
-        baseURL: URL?
+        baseURL: URL?,
+        systemPrompt: String
     ) async -> [SessionRecord]? {
         let lines = records.map { record in
             let label = record.speaker.displayLabel
