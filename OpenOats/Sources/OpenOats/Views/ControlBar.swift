@@ -170,6 +170,12 @@ struct ControlBar: View {
 
                 Spacer()
 
+                Text(BuildInfo.shortLabel)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .help("Version \(BuildInfo.versionString) · built \(BuildInfo.fullBuildDate)")
+                    .accessibilityIdentifier("app.controlBar.buildInfo")
+
                 Text(modelDisplayName)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(.tertiary)
