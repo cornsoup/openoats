@@ -298,7 +298,7 @@ struct IdleHomeDashboardView: View {
         } else {
             coordinator.queueMeetingHistory(event)
         }
-        openWindow(id: "notes")
+        openWindow(id: OpenOatsRootApp.mainWindowID)
     }
 
     private func beginCreateFolder(for event: CalendarEvent) {

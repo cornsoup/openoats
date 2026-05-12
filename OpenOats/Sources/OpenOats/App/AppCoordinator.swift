@@ -135,6 +135,29 @@ final class AppCoordinator {
         get { _liveSummaryEngine }
     }
 
+    // Set by UnifiedOpenOatsView (Task 6) when the sidebar selection changes.
+    // Read by the "Open Selected in New Window" menu command to decide
+    // whether to enable itself.
+    //
+    // `nonisolated(unsafe)` is intentional: every access in practice is on the
+    // MainActor (UnifiedOpenOatsView writes from `.onChange`; the menu builds
+    // on the MainActor). The plain pair (no `access`/`withMutation`) skips
+    // Observation tracking — the menu's `.disabled` re-evaluates on every
+    // render, so observation isn't needed here.
+    @ObservationIgnored nonisolated(unsafe) private var _selectedSessionIDForNewWindow: String?
+    nonisolated var selectedSessionIDForNewWindow: String? {
+        get { _selectedSessionIDForNewWindow }
+        set { _selectedSessionIDForNewWindow = newValue }
+    }
+
+    /// Closure set by `UnifiedOpenOatsView` to handle the menu command.
+    /// (Wired in Task 6.)
+    var openSelectedInNewWindowAction: (() -> Void)?
+
+    func requestOpenSelectedInNewWindow() {
+        openSelectedInNewWindowAction?()
+    }
+
     func setViewServices(
         knowledgeBase: KnowledgeBase,
         suggestionEngine: SuggestionEngine,

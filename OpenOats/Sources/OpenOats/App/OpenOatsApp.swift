@@ -32,8 +32,8 @@ public struct OpenOatsRootApp: App {
     }
 
     public var body: some Scene {
-        Window("OpenOats", id: "main") {
-            ContentView(settings: settings)
+        Window("OpenOats", id: "openoats") {
+            UnifiedOpenOatsView(settings: settings)
                 .environment(container)
                 .environment(coordinator)
                 .environment(focusedPane)
@@ -47,28 +47,16 @@ public struct OpenOatsRootApp: App {
                         showMainWindow: { [self] in showMainWindow() },
                         checkForUpdates: { updaterController.checkForUpdatesFromMenuBar() }
                     )
-                    DiagnosticsSupport.record(category: "app", message: "Main window appeared")
+                    DiagnosticsSupport.record(category: "app", message: "Unified window appeared")
                     settings.applyScreenShareVisibility()
                 }
                 .onOpenURL { url in
-                    guard let command = OpenOatsDeepLink.parse(url) else { return }
-                    // Restore visibility when app is in background mode (LSUIElement)
-                    if NSApp.activationPolicy() == .accessory {
-                        NSApp.setActivationPolicy(.regular)
-                        NSApp.activate(ignoringOtherApps: true)
-                    }
-                    switch command {
-                    case .openNotes(let sessionID):
-                        coordinator.queueSessionSelection(sessionID)
-                        openNotesWindow()
-                    default:
-                        coordinator.queueExternalCommand(command)
-                    }
+                    handleDeepLink(url)
                 }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 720, height: 560)
+        .defaultSize(width: 1100, height: 700)
         .commands {
             CommandGroup(after: .appInfo) {
                 if case .live = container.mode {
@@ -83,9 +71,15 @@ public struct OpenOatsRootApp: App {
                 .keyboardShortcut("l", modifiers: [.command, .shift])
 
                 Button("Past Meetings") {
-                    openNotesWindow()
+                    showMainWindow()
                 }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
+
+                Button("Open Selected in New Window") {
+                    coordinator.requestOpenSelectedInNewWindow()
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+                .disabled(coordinator.selectedSessionIDForNewWindow == nil)
 
                 Button("Import Meeting Recording...") {
                     importMeetingRecording()
@@ -121,14 +115,6 @@ public struct OpenOatsRootApp: App {
             }
         }
 
-        Window("Notes", id: "notes") {
-            NotesView(settings: settings)
-                .environment(container)
-                .environment(coordinator)
-                .defaultAppStorage(defaults)
-        }
-        .defaultSize(width: 700, height: 550)
-
         Window("Transcript", id: "transcript") {
             TranscriptWindowView()
                 .environment(container)
@@ -137,6 +123,16 @@ public struct OpenOatsRootApp: App {
                 .defaultAppStorage(defaults)
         }
         .defaultSize(width: 600, height: 700)
+
+        WindowGroup("Past Meeting", id: "meeting", for: String.self) { $sessionID in
+            if let id = sessionID {
+                PastMeetingWindowView(sessionID: id, settings: settings)
+                    .environment(container)
+                    .environment(coordinator)
+                    .defaultAppStorage(defaults)
+            }
+        }
+        .defaultSize(width: 720, height: 700)
 
         Settings {
             SettingsView(settings: settings, updater: updaterController.updater)
@@ -148,10 +144,30 @@ public struct OpenOatsRootApp: App {
 }
 
 extension OpenOatsRootApp {
-    static let mainWindowID = "main"
+    static let mainWindowID = "openoats"
 
-    private func openNotesWindow() {
-        openWindow(id: "notes")
+    private func handleDeepLink(_ url: URL) {
+        guard let command = OpenOatsDeepLink.parse(url) else { return }
+        // Restore visibility when app is in background mode (LSUIElement)
+        if NSApp.activationPolicy() == .accessory {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        switch command {
+        case .openNotes(let sessionID):
+            // While a recording is in flight the unified window's right pane
+            // is held by the live session — opening a past meeting there
+            // would either get ignored or interrupt the recording. Pop the
+            // requested meeting into its own window instead.
+            if coordinator.liveSessionController?.state.isRunning == true {
+                openWindow(id: "meeting", value: sessionID)
+            } else {
+                coordinator.queueSessionSelection(sessionID)
+                showMainWindow()
+            }
+        default:
+            coordinator.queueExternalCommand(command)
+        }
     }
 
     private var isBatchEngineBusy: Bool {
@@ -225,7 +241,7 @@ extension OpenOatsRootApp {
             let status = await batchAudioTranscriber.status
             if case .completed = status {
                 coordinator.queueSessionSelection(sessionID)
-                openNotesWindow()
+                showMainWindow()
                 await coordinator.loadHistory()
             } else if case .failed = status {
                 // Clean up the orphaned session

@@ -2,202 +2,62 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct ContentView: View {
+/// Root view of the unified OpenOats window. Lays out:
+///
+///     ┌──────────────┬───────────────────────────┐
+///     │              │   Detail (recording or    │
+///     │   Sidebar    │   selected past meeting   │
+///     │              │   or empty state)         │
+///     ├──────────────┴───────────────────────────┤
+///     │             ControlBar                   │
+///     └──────────────────────────────────────────┘
+///
+/// Replaces the separate `main` and `notes` windows. When a recording is
+/// active the right pane shows the live 3-pane stack; when idle with a
+/// session selected it shows that session's notes detail; when idle with
+/// no selection it shows a simple empty state.
+struct UnifiedOpenOatsView: View {
     private enum ControlBarAction {
         case toggle
         case confirmDownload
     }
 
     @Bindable var settings: AppSettings
+
     @Environment(AppContainer.self) private var container
     @Environment(AppCoordinator.self) private var coordinator
     @Environment(FocusedPaneStore.self) private var focusedPane
     @Environment(\.openWindow) private var openWindow
+
+    @State private var notesController: NotesController?
+    @State private var pendingControlBarAction: ControlBarAction?
+
+    // Ported from ContentView
     @State private var overlayManager = OverlayManager()
     @State private var miniBarManager = MiniBarManager()
     @State private var liveSessionController: LiveSessionController?
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var showOnboarding = false
     @State private var showConsentSheet = false
-    @State private var pendingControlBarAction: ControlBarAction?
 
     var body: some View {
-        bodyWithModifiers
-    }
-
-    private var rootContent: some View {
-        let controllerState = liveSessionController?.state ?? LiveSessionState()
-
-        return VStack(spacing: 0) {
-            // Compact header
-            HStack {
-                Text("OpenOats")
-                    .font(.system(size: 13, weight: .semibold))
-
-                Spacer()
-
-                Button {
-                    openWindow(id: "notes")
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "note.text")
-                            .font(.system(size: 11))
-                        Text("Past Meetings")
-                            .font(.system(size: 11))
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("View past meeting notes")
-                .accessibilityIdentifier("app.pastMeetingsButton")
-
-                SettingsLink {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 12))
-                        .padding(4)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Settings")
-                .accessibilityIdentifier("app.settingsButton")
+        Group {
+            if let controller = notesController {
+                ready(controller: controller)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-
-            Divider()
-
-            // Post-session banner
-            if let lastSession = controllerState.lastEndedSession {
-                PostSessionBanner(
-                    session: lastSession,
-                    lastSessionHasNotes: controllerState.lastSessionHasNotes,
-                    canRetranscribe: controllerState.lastEndedSessionCanRetranscribe,
-                    recoveryIsPending: coordinator.pendingRecoverySessionID == lastSession.id,
-                    onOpenTranscript: {
-                        coordinator.queueTranscriptSessionSelection(lastSession.id)
-                        openWindow(id: "notes")
-                    },
-                    onOpenNotes: {
-                        coordinator.queueSessionSelection(lastSession.id)
-                        openWindow(id: "notes")
-                    },
-                    onGenerateNotes: {
-                        openWindow(id: "notes")
-                    },
-                    onRetranscribe: {
-                        coordinator.queueSessionRetranscription(lastSession.id)
-                        openWindow(id: "notes")
-                    }
-                )
-            }
-
-            if controllerState.isRunning, let event = controllerState.matchedCalendarEvent {
-                MatchedCalendarEventBanner(event: event)
-
-                Divider()
-            }
-
-            // NOTE: Floating suggestion panel disabled in favor of inline Suggestions pane.
-            // To restore, uncomment this block and the OverlayManager wiring in .task.
-            /*
-            // Suggestion panel status
-            if controllerState.isRunning {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(controllerState.isGeneratingSuggestions ? Color.orange : Color.green)
-                        .frame(width: 6, height: 6)
-                    Text("\(settings.sidebarMode == .sidecast ? "Sidecast" : "Suggestions") \(overlayManager.isVisible ? "visible" : "hidden")")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        toggleOverlay()
-                    } label: {
-                        Text(overlayManager.isVisible ? "Hide Panel" : "Show Panel")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-
-                Divider()
-            }
-            */
-
-            Spacer(minLength: 0)
-
-            // Stacked panes (always visible; show empty-state placeholders when idle)
-            StackedPanesView(
-                controllerState: controllerState,
-                settings: settings,
-                focusedPane: focusedPane
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // Collapsible scratchpad during live session
-            if controllerState.isRunning {
-                Divider()
-                ScratchpadSection(
-                    text: Binding(
-                        get: { controllerState.scratchpadText },
-                        set: { liveSessionController?.updateScratchpad($0) }
-                    ),
-                    onPasteAssetProviders: { providers in
-                        handleScratchpadAssetPaste(providers)
-                    }
-                )
-            }
-
-            Divider()
-
-            // Bottom bar: live indicator + model
-            IsolatedControlBarWrapper(
-                state: controllerState,
-                onToggle: {
-                    pendingControlBarAction = .toggle
-                },
-                onMuteToggle: {
-                    liveSessionController?.toggleMicMute()
-                },
-                onPauseToggle: {
-                    liveSessionController?.toggleRecordingPause()
-                },
-                onConfirmDownload: {
-                    pendingControlBarAction = .confirmDownload
-                },
-                onOpenSettings: {
-                    openSettingsWindow()
-                },
-                onOpenMicrophonePrivacySettings: {
-                    openMicrophonePrivacySettings()
-                }
-            )
         }
-    }
-
-    private var bodyWithModifiers: some View {
-        contentWithEventHandlers
-    }
-
-    private var sizedRootContent: some View {
-        rootContent
-            .frame(minWidth: 360, minHeight: 400)
-            .background(.ultraThinMaterial)
-    }
-
-    private var contentWithOverlay: some View {
-        sizedRootContent.overlay {
+        .frame(minWidth: 800, minHeight: 500)
+        .background(.ultraThinMaterial)
+        .overlay {
             if showOnboarding {
                 SetupWizardView(
                     isPresented: $showOnboarding,
                     settings: settings
                 )
-                    .transition(.opacity)
+                .transition(.opacity)
             }
             if showConsentSheet {
                 RecordingConsentView(
@@ -207,10 +67,6 @@ struct ContentView: View {
                 .transition(.opacity)
             }
         }
-    }
-
-    private var contentWithLifecycle: some View {
-        contentWithOverlay
         .onChange(of: showOnboarding) { _, isShowing in
             if !isShowing {
                 hasCompletedOnboarding = true
@@ -223,11 +79,12 @@ struct ContentView: View {
             }
         }
         .task {
+            // Onboarding trigger
             if !hasCompletedOnboarding {
                 showOnboarding = true
             }
 
-            // Create and wire the controller
+            // Create and wire the LiveSessionController
             let controller = LiveSessionController(coordinator: coordinator, container: container)
             controller.onRunningStateChanged = { [weak miniBarManager, weak overlayManager] isRunning in
                 if isRunning {
@@ -253,7 +110,13 @@ struct ContentView: View {
                 }
             }
             controller.openNotesWindow = {
-                openWindow(id: "notes")
+                // In the unified window, "open notes" means bring the main window forward.
+                if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == OpenOatsRootApp.mainWindowID }) {
+                    window.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                } else {
+                    openWindow(id: OpenOatsRootApp.mainWindowID)
+                }
             }
             controller.onMiniBarContentUpdate = { [weak controller, weak miniBarManager] in
                 showMiniBar(controller: controller, miniBarManager: miniBarManager)
@@ -263,10 +126,33 @@ struct ContentView: View {
 
             overlayManager.defaults = container.defaults
             miniBarManager.defaults = container.defaults
+
+            // Init notes controller
+            if coordinator.knowledgeBase == nil {
+                container.ensureViewServicesInitialized(settings: settings, coordinator: coordinator)
+            }
+            let notesCtl = NotesController(coordinator: coordinator, settings: settings)
+            notesController = notesCtl
+            await notesCtl.loadHistory()
+
+            // Wire the menu-command hook so ⇧⌘O / "Open Selected in New
+            // Window" pops the currently selected session.
+            coordinator.openSelectedInNewWindowAction = { [weak notesCtl] in
+                guard let notesCtl else { return }
+                if let id = notesCtl.state.selectedSessionID {
+                    openWindow(id: "meeting", value: id)
+                }
+            }
+
             await container.seedIfNeeded(coordinator: coordinator)
             await coordinator.loadHistory()
             controller.handlePendingExternalCommandIfPossible(settings: settings) {
-                openWindow(id: "notes")
+                if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == OpenOatsRootApp.mainWindowID }) {
+                    window.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                } else {
+                    openWindow(id: OpenOatsRootApp.mainWindowID)
+                }
             }
 
             await controller.performInitialSetup()
@@ -282,6 +168,14 @@ struct ContentView: View {
 
             // Start the 100ms polling loop (runs until task cancelled)
             await controller.runPollingLoop(settings: settings)
+        }
+        .onDisappear {
+            coordinator.openSelectedInNewWindowAction = nil
+        }
+        .onChange(of: pendingControlBarAction) {
+            guard let action = pendingControlBarAction else { return }
+            pendingControlBarAction = nil
+            handleControlBarAction(action)
         }
         .onChange(of: settings.meetingAutoDetectEnabled) {
             if settings.meetingAutoDetectEnabled {
@@ -308,10 +202,6 @@ struct ContentView: View {
             guard liveSessionController?.state.isRunning == true, settings.suggestionPanelEnabled else { return }
             showSidebarContent()
         }
-    }
-
-    private var contentWithEventHandlers: some View {
-        contentWithLifecycle
         .onKeyPress(.escape) {
             overlayManager.hide()
             return .handled
@@ -319,14 +209,166 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .toggleSuggestionPanel)) { _ in
             toggleOverlay()
         }
-        .onChange(of: pendingControlBarAction) {
-            guard let action = pendingControlBarAction else { return }
-            pendingControlBarAction = nil
-            handleControlBarAction(action)
+    }
+
+    @ViewBuilder
+    private func ready(controller: NotesController) -> some View {
+        let liveState = liveSessionController?.state
+
+        VStack(spacing: 0) {
+            // Post-session banner (shown above the sidebar/detail split)
+            if let lastSession = liveState?.lastEndedSession {
+                UnifiedPostSessionBanner(
+                    session: lastSession,
+                    lastSessionHasNotes: liveState?.lastSessionHasNotes ?? false,
+                    canRetranscribe: liveState?.lastEndedSessionCanRetranscribe ?? false,
+                    recoveryIsPending: coordinator.pendingRecoverySessionID == lastSession.id,
+                    onOpenTranscript: {
+                        coordinator.queueTranscriptSessionSelection(lastSession.id)
+                        controller.selectSession(lastSession.id)
+                    },
+                    onOpenNotes: {
+                        coordinator.queueSessionSelection(lastSession.id)
+                        controller.selectSession(lastSession.id)
+                    },
+                    onGenerateNotes: {
+                        controller.selectSession(lastSession.id)
+                    },
+                    onRetranscribe: {
+                        coordinator.queueSessionRetranscription(lastSession.id)
+                        controller.selectSession(lastSession.id)
+                    }
+                )
+            }
+
+            HStack(spacing: 0) {
+                NotesSidebarView(settings: settings, controller: controller, state: controller.state)
+                    .frame(width: 250)
+                    .accessibilityIdentifier("app.pastMeetingsButton")
+                    .onChange(of: controller.state.selectedSessionID) { _, newValue in
+                        coordinator.selectedSessionIDForNewWindow = newValue
+                    }
+                Divider()
+                detailArea(controller: controller, liveState: liveState)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            Divider()
+            controlBar(liveState: liveState ?? LiveSessionState())
+        }
+        .onChange(of: liveState?.isRunning ?? false) { wasRunning, isRunning in
+            if isRunning {
+                // Recording started — clear sidebar selection so the right
+                // pane is unambiguously the live session.
+                controller.selectSession(nil)
+            } else if wasRunning {
+                // Recording just stopped. Belt-and-suspenders against
+                // observation timing: explicitly refresh the sidebar (and
+                // wait briefly for finalize to set lastEndedSession before
+                // auto-selecting), independent of the count/id onChange
+                // handlers below.
+                Task {
+                    for _ in 0..<20 {
+                        if coordinator.lastEndedSession != nil { break }
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                    await controller.loadHistory()
+                    if let lastEnded = coordinator.lastEndedSession?.id {
+                        controller.selectSession(lastEnded)
+                    }
+                }
+            }
+        }
+        .onChange(of: coordinator.lastEndedSession?.id) {
+            Task { await controller.handleLastEndedSessionChanged() }
+        }
+        .onChange(of: coordinator.sessionHistory.count) {
+            Task { await controller.loadHistory() }
         }
     }
 
+    @ViewBuilder
+    private func detailArea(controller: NotesController, liveState: LiveSessionState?) -> some View {
+        if let liveState, liveState.isRunning {
+            recordingArea(liveState: liveState, controller: controller)
+        } else if controller.state.selectedSessionID != nil {
+            NotesDetailView(settings: settings, controller: controller, state: controller.state)
+        } else {
+            idleEmptyState
+        }
+    }
+
+    @ViewBuilder
+    private func recordingArea(liveState: LiveSessionState, controller: NotesController) -> some View {
+        VStack(spacing: 0) {
+            // Calendar event banner for live sessions
+            if let event = liveState.matchedCalendarEvent {
+                MatchedCalendarEventBanner(event: event)
+                Divider()
+            }
+
+            StackedPanesView(
+                controllerState: liveState,
+                settings: settings,
+                focusedPane: focusedPane
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Collapsible scratchpad during live session (mirrors ContentView behaviour)
+            Divider()
+            ScratchpadSectionView(
+                text: Binding(
+                    get: { liveState.scratchpadText },
+                    set: { liveSessionController?.updateScratchpad($0) }
+                ),
+                onPasteAssetProviders: { providers in
+                    handleScratchpadAssetPaste(providers)
+                }
+            )
+        }
+    }
+
+    private var idleEmptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "mic.circle")
+                .font(.system(size: 48))
+                .foregroundStyle(.tertiary)
+            Text("Start a new meeting from below, or pick a past one from the sidebar.")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
+    }
+
+    @ViewBuilder
+    private func controlBar(liveState: LiveSessionState) -> some View {
+        IsolatedControlBarWrapperView(
+            state: liveState,
+            onToggle: { pendingControlBarAction = .toggle },
+            onMuteToggle: { liveSessionController?.toggleMicMute() },
+            onPauseToggle: { liveSessionController?.toggleRecordingPause() },
+            onConfirmDownload: { pendingControlBarAction = .confirmDownload },
+            onOpenSettings: { openSettingsWindow() },
+            onOpenMicrophonePrivacySettings: { openMicrophonePrivacySettings() }
+        )
+    }
+
     // MARK: - Actions
+
+    @MainActor
+    private func handleControlBarAction(_ action: ControlBarAction) {
+        switch action {
+        case .toggle:
+            if liveSessionController?.state.isRunning ?? false {
+                liveSessionController?.stopSession(settings: settings)
+            } else if liveSessionController?.state.downloadProgress == nil {
+                startSession()
+            }
+        case .confirmDownload:
+            liveSessionController?.downloadModelOnly(settings: settings)
+        }
+    }
 
     private func startSession() {
         guard settings.hasAcknowledgedRecordingConsent else {
@@ -336,10 +378,6 @@ struct ContentView: View {
             return
         }
         liveSessionController?.startSession(settings: settings)
-    }
-
-    private func stopSession() {
-        liveSessionController?.stopSession(settings: settings)
     }
 
     private func openSettingsWindow() {
@@ -354,6 +392,8 @@ struct ContentView: View {
         }
         NSWorkspace.shared.open(url)
     }
+
+    // MARK: - Overlay / MiniBar helpers (ported from ContentView)
 
     private func showMiniBar(controller: LiveSessionController?, miniBarManager: MiniBarManager?) {
         guard let controller, let miniBarManager else { return }
@@ -387,16 +427,7 @@ struct ContentView: View {
         SidecastPanelContent(settings: settings, engine: coordinator.sidecastEngine)
     }
 
-    private func copyTranscript() {
-        guard let controller = liveSessionController else { return }
-        let timeFmt = DateFormatter()
-        timeFmt.dateFormat = "HH:mm:ss"
-        let lines = controller.state.liveTranscript.map { u in
-            "[\(timeFmt.string(from: u.timestamp))] \(u.speaker.displayLabel): \(u.displayText)"
-        }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
-    }
+    // MARK: - Scratchpad asset paste helpers
 
     private func handleScratchpadAssetPaste(_ providers: [NSItemProvider]) {
         guard liveSessionController?.state.isRunning == true else { return }
@@ -469,26 +500,14 @@ struct ContentView: View {
         }
         return nil
     }
-
-    @MainActor
-    private func handleControlBarAction(_ action: ControlBarAction) {
-        switch action {
-        case .toggle:
-            if liveSessionController?.state.isRunning ?? false {
-                stopSession()
-            } else if liveSessionController?.state.downloadProgress == nil {
-                startSession()
-            }
-        case .confirmDownload:
-            liveSessionController?.downloadModelOnly(settings: settings)
-        }
-    }
-
 }
 
-// MARK: - Scratchpad Section
+// MARK: - Post-Session Banner
+//
+// Moved from ContentView (was private PostSessionBanner) so it can be used
+// by UnifiedOpenOatsView after ContentView.swift is deleted.
 
-private struct PostSessionBanner: View {
+struct UnifiedPostSessionBanner: View {
     let session: SessionIndex
     let lastSessionHasNotes: Bool
     let canRetranscribe: Bool
@@ -609,45 +628,9 @@ private struct PostSessionBanner: View {
     }
 }
 
-private struct ScratchpadSection: View {
-    @Binding var text: String
-    let onPasteAssetProviders: ([NSItemProvider]) -> Void
-    @AppStorage("isScratchpadExpanded") private var isExpanded = true
-
-    private let pasteAssetTypes: [UTType] = [.png, .jpeg, .tiff, .image, .fileURL]
-
-    var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            TextEditor(text: $text)
-                .font(.system(size: 12))
-                .scrollContentBackground(.hidden)
-                .frame(height: 100)
-                .padding(4)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .onPasteCommand(of: pasteAssetTypes) { providers in
-                    onPasteAssetProviders(providers)
-                }
-        } label: {
-            HStack(spacing: 6) {
-                Text("My Notes")
-                    .font(.system(size: 12, weight: .medium))
-                if !text.isEmpty {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 5, height: 5)
-                }
-                Spacer()
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-}
-
 // MARK: - Isolated View Wrappers
 
-private struct IsolatedControlBarWrapper: View {
+private struct IsolatedControlBarWrapperView: View {
     let state: LiveSessionState
     let onToggle: () -> Void
     let onMuteToggle: () -> Void
@@ -681,5 +664,43 @@ private struct IsolatedControlBarWrapper: View {
             onOpenSettings: onOpenSettings,
             onOpenMicrophonePrivacySettings: onOpenMicrophonePrivacySettings
         )
+    }
+}
+
+// MARK: - Scratchpad Section
+
+private struct ScratchpadSectionView: View {
+    @Binding var text: String
+    let onPasteAssetProviders: ([NSItemProvider]) -> Void
+    @AppStorage("isScratchpadExpanded") private var isExpanded = true
+
+    private let pasteAssetTypes: [UTType] = [.png, .jpeg, .tiff, .image, .fileURL]
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            TextEditor(text: $text)
+                .font(.system(size: 12))
+                .scrollContentBackground(.hidden)
+                .frame(height: 100)
+                .padding(4)
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .onPasteCommand(of: pasteAssetTypes) { providers in
+                    onPasteAssetProviders(providers)
+                }
+        } label: {
+            HStack(spacing: 6) {
+                Text("My Notes")
+                    .font(.system(size: 12, weight: .medium))
+                if !text.isEmpty {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 5, height: 5)
+                }
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 }
