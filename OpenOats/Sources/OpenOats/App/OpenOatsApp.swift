@@ -129,7 +129,7 @@ public struct OpenOatsRootApp: App {
         .defaultSize(width: 720, height: 700)
 
         Settings {
-            SettingsView(settings: settings, updater: updaterController.updater)
+            SettingsView(settings: settings)
                 .environment(container)
                 .environment(coordinator)
                 .defaultAppStorage(defaults)
@@ -346,9 +346,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let controller = MenuBarController(
             coordinator: coordinator,
             settings: settings,
-            onCheckForUpdates: { [weak self] in
-                self?.checkForUpdatesAction?()
-            },
             onToggleMeeting: { [weak self] in
                 self?.toggleMeeting()
             }

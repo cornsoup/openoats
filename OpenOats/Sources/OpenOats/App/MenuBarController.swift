@@ -18,7 +18,6 @@ final class MenuBarController {
     init(
         coordinator: AppCoordinator,
         settings: AppSettings,
-        onCheckForUpdates: @escaping () -> Void,
         onToggleMeeting: @escaping () -> Void
     ) {
         self.coordinator = coordinator
@@ -38,10 +37,6 @@ final class MenuBarController {
             onShowMainWindow: { [weak self] in
                 self?.popover.performClose(nil)
                 self?.onShowMainWindow?()
-            },
-            onCheckForUpdates: { [weak self] in
-                self?.popover.performClose(nil)
-                onCheckForUpdates()
             },
             onShowSettings: { [weak self] in
                 self?.popover.performClose(nil)

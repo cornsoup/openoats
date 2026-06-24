@@ -3,7 +3,6 @@ import SwiftUI
 import CoreAudio
 import LaunchAtLogin
 import ServiceManagement
-import Sparkle
 
 // MARK: - Settings Tab Enum
 
@@ -20,12 +19,11 @@ private enum SettingsTab: String, CaseIterable {
 
 struct SettingsView: View {
     @Bindable var settings: AppSettings
-    var updater: SPUUpdater
     @State private var selectedTab: SettingsTab = .general
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            GeneralSettingsTab(settings: settings, updater: updater)
+            GeneralSettingsTab(settings: settings)
                 .tabItem { Label("General", systemImage: "gear") }
                 .tag(SettingsTab.general)
 
@@ -58,8 +56,6 @@ struct SettingsView: View {
 
 private struct GeneralSettingsTab: View {
     @Bindable var settings: AppSettings
-    var updater: SPUUpdater
-    @State private var automaticallyChecksForUpdates = false
     @State private var showAutoDetectExplanation = false
     @State private var launchAtLoginEnabled = false
     @State private var showWizard = false
@@ -307,11 +303,6 @@ private struct GeneralSettingsTab: View {
                 }
             }
             .formStyle(.grouped)
-        }
-        .onAppear {
-            Task { @MainActor in
-                automaticallyChecksForUpdates = updater.automaticallyChecksForUpdates
-            }
         }
         .sheet(isPresented: $showWizard) {
             SetupWizardView(

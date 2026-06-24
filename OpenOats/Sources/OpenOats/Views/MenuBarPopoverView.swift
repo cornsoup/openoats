@@ -5,7 +5,6 @@ struct MenuBarPopoverView: View {
     let settings: AppSettings
     let onToggleMeeting: () -> Void
     let onShowMainWindow: () -> Void
-    let onCheckForUpdates: () -> Void
     let onShowSettings: () -> Void
     let onQuit: () -> Void
 
