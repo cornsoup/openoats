@@ -709,9 +709,11 @@ final class LiveSessionController {
         } else {
             endingMetadata = nil
         }
-        let metadataTitle = endingMetadata?.title ?? endingMetadata?.calendarEvent?.title
-        let title = coordinator.transcriptStore.conversationState.currentTopic.isEmpty
-            ? metadataTitle : coordinator.transcriptStore.conversationState.currentTopic
+        let title = Self.resolveSessionTitle(
+            calendarEventTitle: endingMetadata?.calendarEvent?.title,
+            currentTopic: coordinator.transcriptStore.conversationState.currentTopic,
+            metadataTitle: endingMetadata?.title
+        )
         let meetingAppName = endingMetadata?.detectionContext?.meetingApp?.name
 
         let engineName = settings?.transcriptionModel.rawValue
@@ -987,6 +989,23 @@ final class LiveSessionController {
 
     private static func dateSubfolderFormat(for settings: AppSettings) -> MeetingTranscriptDateFolderFormat? {
         settings.saveMeetingTranscriptsInDateSubfolders ? settings.meetingTranscriptDateFolderFormat : nil
+    }
+
+    /// Final session title precedence: a matched calendar event title wins, then the
+    /// LLM-derived conversation topic, then the provisional metadata title (app name).
+    nonisolated static func resolveSessionTitle(
+        calendarEventTitle: String?,
+        currentTopic: String,
+        metadataTitle: String?
+    ) -> String? {
+        if let cal = calendarEventTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !cal.isEmpty {
+            return cal
+        }
+        if !currentTopic.isEmpty {
+            return currentTopic
+        }
+        return metadataTitle
     }
 
     static func transcriptIssue(for input: RecordingHealthInput) -> SessionTranscriptIssue? {
