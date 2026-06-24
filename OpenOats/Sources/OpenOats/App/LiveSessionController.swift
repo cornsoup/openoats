@@ -128,6 +128,7 @@ final class LiveSessionController {
 
     private var downloadTask: Task<Void, Never>?
     private var startPreflightTask: Task<Void, Never>?
+    private var gogLookupTask: Task<Void, Never>?
     private var scratchpadSaveTask: Task<Void, Never>?
     private var pendingInitialScratchpad: String?
 
@@ -279,6 +280,20 @@ final class LiveSessionController {
 
     // MARK: - Session Actions
 
+    /// Kick off a non-blocking gog calendar lookup once a session is recording, and
+    /// backfill the matched event into the session metadata. Best-effort; failures are silent.
+    private func startGogCalendarLookup(settings: AppSettings) {
+        gogLookupTask?.cancel()
+        guard settings.gogCalendarEnabled, let client = container.gogCalendarClient else { return }
+        let account = settings.gogCalendarAccount
+        gogLookupTask = Task { [weak self] in
+            let event = await client.currentEvent(account: account)
+            guard !Task.isCancelled, let self, let event else { return }
+            self.coordinator.attachCalendarEvent(event)
+            self.syncProjectedState(settings: settings)
+        }
+    }
+
     func startSession(
         settings: AppSettings,
         calendarEventOverride: CalendarEvent? = nil,
@@ -311,14 +326,17 @@ final class LiveSessionController {
                 self.syncProjectedState(settings: settings)
                 guard issue == nil else { return }
                 self.coordinator.handle(.userStarted(metadata), settings: settings)
+                self.startGogCalendarLookup(settings: settings)
             }
             return
         }
 
         coordinator.handle(.userStarted(metadata), settings: settings)
+        startGogCalendarLookup(settings: settings)
     }
 
     func stopSession(settings: AppSettings) {
+        gogLookupTask?.cancel()
         DiagnosticsSupport.record(category: "meeting", message: "Stop requested")
         coordinator.handle(.userStopped, settings: settings)
     }

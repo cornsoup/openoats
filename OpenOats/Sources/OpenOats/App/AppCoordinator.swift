@@ -203,6 +203,19 @@ final class AppCoordinator {
 
     // MARK: - State Machine
 
+    /// Backfill a calendar event discovered asynchronously after the session started.
+    /// No-op if no session is active.
+    func attachCalendarEvent(_ event: CalendarEvent) {
+        switch state {
+        case .recording(let metadata):
+            state = .recording(metadata.withCalendarEvent(event))
+        case .ending(let metadata):
+            state = .ending(metadata.withCalendarEvent(event))
+        case .idle:
+            break
+        }
+    }
+
     /// Drive the meeting lifecycle through the state machine, then dispatch side effects.
     func handle(_ event: MeetingEvent, settings: AppSettings? = nil) {
         let resolvedSettings = settings ?? activeSettings

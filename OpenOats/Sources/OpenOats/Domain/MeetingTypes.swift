@@ -309,3 +309,17 @@ struct MeetingMetadata: Sendable, Equatable, Codable {
         )
     }
 }
+
+extension MeetingMetadata {
+    /// Returns a copy with `calendarEvent` set; fills `title` from the event only if
+    /// it was previously unset.
+    func withCalendarEvent(_ event: CalendarEvent) -> MeetingMetadata {
+        MeetingMetadata(
+            detectionContext: detectionContext,
+            calendarEvent: event,
+            title: title ?? event.title,
+            startedAt: startedAt,
+            endedAt: endedAt
+        )
+    }
+}
