@@ -213,6 +213,8 @@ private struct GeneralSettingsTab: View {
                             .foregroundStyle(.secondary)
 
                         CalendarStatusView()
+
+                        CalendarFilterPickerView(settings: settings)
                     }
                 }
 
@@ -1294,6 +1296,74 @@ private struct GranolaImportButton: View {
                 isImporting = false
             }
         }
+    }
+}
+
+// MARK: - Calendar Filter Picker View
+
+private struct CalendarFilterPickerView: View {
+    @Bindable var settings: AppSettings
+    @Environment(AppContainer.self) private var container
+
+    @State private var calendars: [CalendarChoice] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Match these calendars")
+                .font(.system(size: 12, weight: .medium))
+
+            if calendars.isEmpty {
+                Text("No calendars available yet.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(calendars) { cal in
+                    Toggle(isOn: binding(for: cal.id)) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(color(for: cal.colorHex))
+                                .frame(width: 8, height: 8)
+                            Text(cal.title).font(.system(size: 12))
+                        }
+                    }
+                }
+            }
+
+            Text(settings.meetingCalendarIDs.isEmpty
+                 ? "Using all calendars. Check one or more to limit matching (e.g. Test IIT)."
+                 : "Only the checked calendars are used to title meetings and show context.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 4)
+        .task {
+            calendars = container.calendarManager?.availableCalendars() ?? []
+        }
+    }
+
+    private func binding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { settings.meetingCalendarIDs.contains(id) },
+            set: { isOn in
+                var ids = settings.meetingCalendarIDs
+                if isOn {
+                    if !ids.contains(id) { ids.append(id) }
+                } else {
+                    ids.removeAll { $0 == id }
+                }
+                settings.meetingCalendarIDs = ids
+            }
+        )
+    }
+
+    private func color(for hex: String?) -> Color {
+        guard let hex, hex.hasPrefix("#"), hex.count == 7,
+              let v = Int(hex.dropFirst(), radix: 16) else { return .secondary }
+        return Color(
+            red: Double((v >> 16) & 0xFF) / 255,
+            green: Double((v >> 8) & 0xFF) / 255,
+            blue: Double(v & 0xFF) / 255
+        )
     }
 }
 
