@@ -156,4 +156,20 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.kbFolderURL?.path, "/tmp/test-kb")
         settings.kbFolderPath = originalPath
     }
+
+    // MARK: - Gog Calendar Settings
+
+    func testGogCalendarDefaults() {
+        let settings = makeSettings()
+        XCTAssertFalse(settings.gogCalendarEnabled)
+        XCTAssertEqual(settings.gogCalendarAccount, "jja@cornsoup.net")
+    }
+
+    func testGogCalendarPersistsValues() {
+        let settings = makeSettings()
+        settings.gogCalendarEnabled = true
+        settings.gogCalendarAccount = "test@example.com"
+        XCTAssertTrue(settings.gogCalendarEnabled)
+        XCTAssertEqual(settings.gogCalendarAccount, "test@example.com")
+    }
 }
