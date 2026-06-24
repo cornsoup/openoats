@@ -158,7 +158,11 @@ struct UnifiedOpenOatsView: View {
             await controller.performInitialSetup()
 
             // Setup calendar integration if enabled
-            container.updateCalendarIntegration(enabled: settings.calendarIntegrationEnabled)
+            container.updateCalendarIntegration(
+                enabled: settings.calendarIntegrationEnabled,
+                selectedCalendarIDs: Set(settings.meetingCalendarIDs)
+            )
+            await container.seedDefaultMeetingCalendarsIfNeeded(settings: settings)
 
             // Setup meeting detection if enabled
             if settings.meetingAutoDetectEnabled {
@@ -188,7 +192,14 @@ struct UnifiedOpenOatsView: View {
             }
         }
         .onChange(of: settings.calendarIntegrationEnabled) {
-            container.updateCalendarIntegration(enabled: settings.calendarIntegrationEnabled)
+            container.updateCalendarIntegration(
+                enabled: settings.calendarIntegrationEnabled,
+                selectedCalendarIDs: Set(settings.meetingCalendarIDs)
+            )
+            Task { await container.seedDefaultMeetingCalendarsIfNeeded(settings: settings) }
+        }
+        .onChange(of: settings.meetingCalendarIDs) {
+            container.updateSelectedCalendars(Set(settings.meetingCalendarIDs))
         }
         .onChange(of: settings.suggestionsAlwaysOnTop) {
             overlayManager.updateAlwaysOnTop(settings.suggestionsAlwaysOnTop)

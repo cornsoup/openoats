@@ -241,7 +241,7 @@ final class AppContainer {
 
     /// Enable or disable calendar event lookup based on the user setting.
     /// When enabled for the first time, creates the CalendarManager and requests access.
-    func updateCalendarIntegration(enabled: Bool) {
+    func updateCalendarIntegration(enabled: Bool, selectedCalendarIDs: Set<String>) {
         if enabled {
             if calendarManager == nil {
                 calendarManager = CalendarManager()
@@ -249,6 +249,7 @@ final class AppContainer {
                 // Re-read TCC in case the system state changed since the manager was created.
                 calendarManager?.refreshFromSystem()
             }
+            calendarManager?.selectedCalendarIDs = selectedCalendarIDs
             if calendarManager?.accessState == .notDetermined {
                 Task {
                     _ = await calendarManager?.requestAccess()
@@ -257,6 +258,30 @@ final class AppContainer {
         } else {
             calendarManager = nil
         }
+    }
+
+    /// Update the active calendar filter (when the user changes the selection).
+    func updateSelectedCalendars(_ ids: Set<String>) {
+        calendarManager?.selectedCalendarIDs = ids
+    }
+
+    /// One-time: pre-select the default meeting calendar(s) (e.g. "Test IIT") the
+    /// first time calendar access is authorized. Never overwrites a later manual
+    /// selection (guarded by `meetingCalendarsSeeded`).
+    @MainActor
+    func seedDefaultMeetingCalendarsIfNeeded(settings: AppSettings) async {
+        guard !settings.meetingCalendarsSeeded else { return }
+        guard let manager = calendarManager else { return } // only when integration is on
+        if manager.accessState == .notDetermined {
+            _ = await manager.requestAccess()
+        }
+        guard manager.accessState == .authorized else { return } // retry on a later launch
+        let ids = manager.calendarIDs(forTitles: MeetingCalendarDefaults.titles)
+        if !ids.isEmpty {
+            settings.meetingCalendarIDs = ids
+            manager.selectedCalendarIDs = Set(ids)
+        }
+        settings.meetingCalendarsSeeded = true
     }
 
     func seedIfNeeded(coordinator: AppCoordinator) async {
