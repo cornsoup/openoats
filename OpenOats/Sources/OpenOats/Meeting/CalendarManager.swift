@@ -19,6 +19,9 @@ final class CalendarManager {
     /// Current authorization status, observed at init and after requesting access.
     private(set) var accessState: AccessState
 
+    /// Calendars to restrict event lookup to. Empty = all event calendars.
+    var selectedCalendarIDs: Set<String> = []
+
     init() {
         self.accessState = Self.currentAccessState()
     }
@@ -123,6 +126,27 @@ final class CalendarManager {
 
     private func eventCalendars() -> [EKCalendar] {
         store.calendars(for: .event)
+            .filter { CalendarFilter.keep($0.calendarIdentifier, selected: selectedCalendarIDs) }
+    }
+
+    /// All event calendars (unfiltered) for the settings picker.
+    func availableCalendars() -> [CalendarChoice] {
+        guard accessState == .authorized else { return [] }
+        return store.calendars(for: .event)
+            .map { CalendarChoice(
+                id: $0.calendarIdentifier,
+                title: $0.title,
+                colorHex: CalendarColorCodec.hexString(from: $0.cgColor)
+            ) }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    /// Identifiers of available event calendars whose title is in `titles`.
+    func calendarIDs(forTitles titles: Set<String>) -> [String] {
+        guard accessState == .authorized else { return [] }
+        return store.calendars(for: .event)
+            .filter { titles.contains($0.title) }
+            .map { $0.calendarIdentifier }
     }
 
     private static func currentAccessState() -> AccessState {
@@ -135,6 +159,13 @@ final class CalendarManager {
             return .denied
         }
     }
+}
+
+/// A calendar option shown in the settings filter picker.
+struct CalendarChoice: Identifiable, Hashable {
+    let id: String        // EKCalendar.calendarIdentifier
+    let title: String
+    let colorHex: String?
 }
 
 // MARK: - EKEvent → CalendarEvent
