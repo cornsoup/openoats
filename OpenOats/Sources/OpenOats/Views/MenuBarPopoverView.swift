@@ -44,16 +44,6 @@ struct MenuBarPopoverView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 
-            Button(action: onCheckForUpdates) {
-                HStack {
-                    Text("Check for Updates…")
-                    Spacer()
-                }
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-
             Button(action: onShowSettings) {
                 HStack {
                     Text("Settings…")

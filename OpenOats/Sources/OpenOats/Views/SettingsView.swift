@@ -270,16 +270,6 @@ private struct GeneralSettingsTab: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Updates") {
-                    Toggle("Automatically check for updates", isOn: $automaticallyChecksForUpdates)
-                        .font(.system(size: 12))
-                        .onChange(of: automaticallyChecksForUpdates) { _, newValue in
-                            Task { @MainActor in
-                                updater.automaticallyChecksForUpdates = newValue
-                            }
-                        }
-                }
-
                 Section("Setup") {
                     Button("Re-run Setup Wizard") {
                         showWizard = true

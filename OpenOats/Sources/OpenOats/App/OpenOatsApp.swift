@@ -59,12 +59,6 @@ public struct OpenOatsRootApp: App {
         .defaultSize(width: 1100, height: 700)
         .commands {
             CommandGroup(after: .appInfo) {
-                if case .live = container.mode {
-                    CheckForUpdatesView(updater: updaterController.updater)
-
-                    Divider()
-                }
-
                 Button("Toggle Meeting") {
                     appDelegate.toggleMeeting()
                 }

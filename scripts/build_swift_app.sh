@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build macOS .app for OpenOats (Swift)
+# Build macOS .app for OpenOats (Swift) and install it to /Applications.
 # Usage:
-#   ./scripts/build_swift_app.sh
+#   ./scripts/build_swift_app.sh            # release build (default)
+#   CONFIG=debug ./scripts/build_swift_app.sh   # debug/dev build, still bundled + installed
 #
 # For CI / explicit identity:
 #   CODESIGN_IDENTITY="Developer ID Application: ..." ./scripts/build_swift_app.sh
@@ -21,15 +22,21 @@ ROOT_DIR="$(pwd)"
 SWIFT_DIR="$ROOT_DIR/OpenOats"
 APP_NAME="OpenOats"
 BUNDLE_ID="com.openoats.app"
+CONFIG="${CONFIG:-release}"
 SKIP_SIGN="${SKIP_SIGN:-0}"
 SKIP_INSTALL="${SKIP_INSTALL:-0}"
 
-echo "=== Building $APP_NAME (Swift) ==="
+if [[ "$CONFIG" != "release" && "$CONFIG" != "debug" ]]; then
+  echo "Invalid CONFIG=\"$CONFIG\" (expected \"release\" or \"debug\")"
+  exit 1
+fi
 
-# Build release binary
+echo "=== Building $APP_NAME (Swift, $CONFIG) ==="
+
+# Build binary in the requested configuration
 cd "$SWIFT_DIR"
-swift build -c release 2>&1
-BINARY_PATH=".build/release/OpenOats"
+swift build -c "$CONFIG" 2>&1
+BINARY_PATH=".build/$CONFIG/OpenOats"
 
 if [[ ! -f "$BINARY_PATH" ]]; then
   echo "Build failed: binary not found at $BINARY_PATH"
