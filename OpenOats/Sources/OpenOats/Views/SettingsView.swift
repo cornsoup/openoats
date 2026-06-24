@@ -1336,7 +1336,7 @@ private struct CalendarFilterPickerView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.top, 4)
-        .task {
+        .task(id: container.calendarManager?.accessState) {
             calendars = container.calendarManager?.availableCalendars() ?? []
         }
     }
