@@ -157,42 +157,4 @@ final class AppSettingsTests: XCTestCase {
         settings.kbFolderPath = originalPath
     }
 
-    // MARK: - Gog Calendar Settings
-
-    func testGogCalendarDefaults() {
-        let settings = makeSettings()
-        XCTAssertFalse(settings.gogCalendarEnabled)
-        XCTAssertEqual(settings.gogCalendarAccount, "jja@cornsoup.net")
-    }
-
-    func testGogCalendarPersistsValues() {
-        // Create shared UserDefaults suite (matching makeSettings() pattern)
-        let suiteName = "com.openoats.test.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-
-        // First instance: set values
-        let storage1 = AppSettingsStorage(
-            defaults: defaults,
-            secretStore: .ephemeral,
-            defaultNotesDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("AppSettingsTests"),
-            runMigrations: false
-        )
-        let settings1 = AppSettings(storage: storage1)
-        settings1.gogCalendarEnabled = true
-        settings1.gogCalendarAccount = "test@example.com"
-
-        // Second instance: verify values persisted through UserDefaults
-        let storage2 = AppSettingsStorage(
-            defaults: defaults,
-            secretStore: .ephemeral,
-            defaultNotesDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("AppSettingsTests"),
-            runMigrations: false
-        )
-        let settings2 = AppSettings(storage: storage2)
-        XCTAssertTrue(settings2.gogCalendarEnabled)
-        XCTAssertEqual(settings2.gogCalendarAccount, "test@example.com")
-    }
 }

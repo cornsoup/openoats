@@ -1,6 +1,6 @@
 import Foundation
 
-/// Pure event-selection logic shared by calendar sources (EventKit + gog).
+/// Pure event-selection logic for calendar sources (EventKit).
 /// Callers exclude all-day / cancelled events before calling.
 enum CalendarEventSelection {
     /// Choose the event whose start is closest to `date`, breaking ties by the

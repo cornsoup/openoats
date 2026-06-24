@@ -80,14 +80,6 @@ final class AppCoordinator {
         return false
     }
 
-    /// The metadata for the active session, or nil when idle.
-    var currentMetadata: MeetingMetadata? {
-        switch state {
-        case .recording(let m), .ending(let m): return m
-        case .idle: return nil
-        }
-    }
-
     @ObservationIgnored nonisolated(unsafe) private var _sessionHistory: [SessionIndex] = []
     private(set) var sessionHistory: [SessionIndex] {
         get { access(keyPath: \.sessionHistory); return _sessionHistory }
@@ -210,19 +202,6 @@ final class AppCoordinator {
 
 
     // MARK: - State Machine
-
-    /// Backfill a calendar event discovered asynchronously after the session started.
-    /// No-op if no session is active.
-    func attachCalendarEvent(_ event: CalendarEvent) {
-        switch state {
-        case .recording(let metadata):
-            state = .recording(metadata.withCalendarEvent(event))
-        case .ending(let metadata):
-            state = .ending(metadata.withCalendarEvent(event))
-        case .idle:
-            break
-        }
-    }
 
     /// Drive the meeting lifecycle through the state machine, then dispatch side effects.
     func handle(_ event: MeetingEvent, settings: AppSettings? = nil) {

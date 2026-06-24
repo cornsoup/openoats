@@ -795,28 +795,6 @@ final class SettingsStore {
         }
     }
 
-    @ObservationIgnored nonisolated(unsafe) private var _gogCalendarEnabled: Bool
-    var gogCalendarEnabled: Bool {
-        get { access(keyPath: \.gogCalendarEnabled); return _gogCalendarEnabled }
-        set {
-            withMutation(keyPath: \.gogCalendarEnabled) {
-                _gogCalendarEnabled = newValue
-                defaults.set(newValue, forKey: "gogCalendarEnabled")
-            }
-        }
-    }
-
-    @ObservationIgnored nonisolated(unsafe) private var _gogCalendarAccount: String
-    var gogCalendarAccount: String {
-        get { access(keyPath: \.gogCalendarAccount); return _gogCalendarAccount }
-        set {
-            withMutation(keyPath: \.gogCalendarAccount) {
-                _gogCalendarAccount = newValue
-                defaults.set(newValue, forKey: "gogCalendarAccount")
-            }
-        }
-    }
-
     @ObservationIgnored nonisolated(unsafe) private var _shareCalendarContextWithCloudNotes: Bool
     var shareCalendarContextWithCloudNotes: Bool {
         get { access(keyPath: \.shareCalendarContextWithCloudNotes); return _shareCalendarContextWithCloudNotes }
@@ -1412,8 +1390,6 @@ final class SettingsStore {
         self._hasShownAutoDetectExplanation = defaults.bool(forKey: "hasShownAutoDetectExplanation")
         self._hasShownCameraDetectExplanation = defaults.bool(forKey: "hasShownCameraDetectExplanation")
         self._calendarIntegrationEnabled = defaults.bool(forKey: "calendarIntegrationEnabled")
-        self._gogCalendarEnabled = defaults.bool(forKey: "gogCalendarEnabled")
-        self._gogCalendarAccount = defaults.string(forKey: "gogCalendarAccount") ?? "jja@cornsoup.net"
         self._shareCalendarContextWithCloudNotes = defaults.bool(forKey: "shareCalendarContextWithCloudNotes")
 
         // Privacy Settings

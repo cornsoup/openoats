@@ -552,36 +552,4 @@ final class MeetingStateTests: XCTestCase {
         XCTAssertEqual(decoded, entry)
     }
 
-    // -------------------------------------------------------------------------
-    // MARK: - withCalendarEvent Tests
-    // -------------------------------------------------------------------------
-
-    func testWithCalendarEventSetsEventAndFillsTitle() {
-        let base = MeetingMetadata.manual(calendarEvent: nil)
-        XCTAssertNil(base.calendarEvent)
-        let event = CalendarEvent(
-            id: "e1", title: "Budget Sync",
-            startDate: Date(), endDate: Date().addingTimeInterval(1800),
-            organizer: nil, participants: [], isOnlineMeeting: false, meetingURL: nil
-        )
-        let updated = base.withCalendarEvent(event)
-        XCTAssertEqual(updated.calendarEvent?.id, "e1")
-        XCTAssertEqual(updated.title, "Budget Sync")  // title was nil → filled from event
-        XCTAssertEqual(updated.startedAt, base.startedAt) // unchanged
-    }
-
-    func testWithCalendarEventKeepsExistingTitle() {
-        let event = CalendarEvent(
-            id: "e1", title: "From Calendar",
-            startDate: Date(), endDate: Date(),
-            organizer: nil, participants: [], isOnlineMeeting: false, meetingURL: nil
-        )
-        let withTitle = MeetingMetadata(
-            detectionContext: nil, calendarEvent: nil, title: "Existing",
-            startedAt: Date(), endedAt: nil
-        )
-        let updated = withTitle.withCalendarEvent(event)
-        XCTAssertEqual(updated.title, "Existing")
-        XCTAssertEqual(updated.calendarEvent?.title, "From Calendar")
-    }
 }

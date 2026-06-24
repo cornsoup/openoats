@@ -159,7 +159,6 @@ struct UnifiedOpenOatsView: View {
 
             // Setup calendar integration if enabled
             container.updateCalendarIntegration(enabled: settings.calendarIntegrationEnabled)
-            container.updateGogCalendar(enabled: settings.gogCalendarEnabled)
 
             // Setup meeting detection if enabled
             if settings.meetingAutoDetectEnabled {
@@ -190,9 +189,6 @@ struct UnifiedOpenOatsView: View {
         }
         .onChange(of: settings.calendarIntegrationEnabled) {
             container.updateCalendarIntegration(enabled: settings.calendarIntegrationEnabled)
-        }
-        .onChange(of: settings.gogCalendarEnabled) {
-            container.updateGogCalendar(enabled: settings.gogCalendarEnabled)
         }
         .onChange(of: settings.suggestionsAlwaysOnTop) {
             overlayManager.updateAlwaysOnTop(settings.suggestionsAlwaysOnTop)
