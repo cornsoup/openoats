@@ -23,6 +23,10 @@ final class AppContainer {
     /// Created when the calendar integration setting is enabled.
     private(set) var calendarManager: CalendarManager?
 
+    /// Client for sourcing the current event from Google Calendar via the `gog` CLI.
+    /// Created when the gog calendar setting is enabled.
+    private(set) var gogCalendarClient: GogCalendarClient?
+
     private var didSeedInitialData = false
     private var didInitializeViewServices = false
     private var didInitializeRecordingServices = false
@@ -256,6 +260,17 @@ final class AppContainer {
             }
         } else {
             calendarManager = nil
+        }
+    }
+
+    /// Enable or disable gog-based calendar lookup based on the user setting.
+    func updateGogCalendar(enabled: Bool) {
+        if enabled {
+            if gogCalendarClient == nil {
+                gogCalendarClient = GogCalendarClient()
+            }
+        } else {
+            gogCalendarClient = nil
         }
     }
 
