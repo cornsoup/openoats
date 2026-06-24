@@ -795,6 +795,28 @@ final class SettingsStore {
         }
     }
 
+    @ObservationIgnored nonisolated(unsafe) private var _meetingCalendarIDs: [String]
+    var meetingCalendarIDs: [String] {
+        get { access(keyPath: \.meetingCalendarIDs); return _meetingCalendarIDs }
+        set {
+            withMutation(keyPath: \.meetingCalendarIDs) {
+                _meetingCalendarIDs = newValue
+                defaults.set(newValue, forKey: "meetingCalendarIDs")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _meetingCalendarsSeeded: Bool
+    var meetingCalendarsSeeded: Bool {
+        get { access(keyPath: \.meetingCalendarsSeeded); return _meetingCalendarsSeeded }
+        set {
+            withMutation(keyPath: \.meetingCalendarsSeeded) {
+                _meetingCalendarsSeeded = newValue
+                defaults.set(newValue, forKey: "meetingCalendarsSeeded")
+            }
+        }
+    }
+
     @ObservationIgnored nonisolated(unsafe) private var _shareCalendarContextWithCloudNotes: Bool
     var shareCalendarContextWithCloudNotes: Bool {
         get { access(keyPath: \.shareCalendarContextWithCloudNotes); return _shareCalendarContextWithCloudNotes }
@@ -1390,6 +1412,8 @@ final class SettingsStore {
         self._hasShownAutoDetectExplanation = defaults.bool(forKey: "hasShownAutoDetectExplanation")
         self._hasShownCameraDetectExplanation = defaults.bool(forKey: "hasShownCameraDetectExplanation")
         self._calendarIntegrationEnabled = defaults.bool(forKey: "calendarIntegrationEnabled")
+        self._meetingCalendarIDs = defaults.stringArray(forKey: "meetingCalendarIDs") ?? []
+        self._meetingCalendarsSeeded = defaults.bool(forKey: "meetingCalendarsSeeded")
         self._shareCalendarContextWithCloudNotes = defaults.bool(forKey: "shareCalendarContextWithCloudNotes")
 
         // Privacy Settings

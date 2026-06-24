@@ -157,4 +157,32 @@ final class AppSettingsTests: XCTestCase {
         settings.kbFolderPath = originalPath
     }
 
+    // MARK: - Meeting Calendar Filter Settings
+
+    func testMeetingCalendarDefaults() {
+        let settings = makeSettings()
+        XCTAssertEqual(settings.meetingCalendarIDs, [])
+        XCTAssertFalse(settings.meetingCalendarsSeeded)
+    }
+
+    func testMeetingCalendarPersistsAcrossInstances() {
+        let suiteName = "com.openoats.test.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        func makeStore() -> AppSettings {
+            let storage = AppSettingsStorage(
+                defaults: defaults, secretStore: .ephemeral,
+                defaultNotesDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent("AppSettingsTests"),
+                runMigrations: false)
+            return AppSettings(storage: storage)
+        }
+        let s1 = makeStore()
+        s1.meetingCalendarIDs = ["cal-1", "cal-2"]
+        s1.meetingCalendarsSeeded = true
+        let s2 = makeStore()
+        XCTAssertEqual(s2.meetingCalendarIDs, ["cal-1", "cal-2"])
+        XCTAssertTrue(s2.meetingCalendarsSeeded)
+    }
+
 }
