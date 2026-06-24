@@ -33,6 +33,7 @@ per-calendar filter is the correct path.
 | gog feature | Remove entirely. |
 | Filter selection | Multi-select; empty = all calendars (backward-compatible). |
 | Filter scope | Everywhere (titling + idle dashboard), via `eventCalendars()`. |
+| Default selection | One-time seed: pre-select the calendar titled **"Test IIT"** on first authorized run. |
 
 ## Part 1 — Remove the gog feature
 
@@ -108,6 +109,32 @@ enum CalendarFilter {
 `defaults.stringArray(forKey:) ?? []`. Stored as an array (UserDefaults has no
 Set); converted to `Set` when handed to the manager.
 
+Plus a one-time seed guard `var meetingCalendarsSeeded: Bool` (default `false`,
+key `"meetingCalendarsSeeded"`), so an empty selection after seeding is
+respected as the user's deliberate "all calendars" choice rather than re-seeded.
+
+### Default selection seed (Test IIT)
+The feature ships pre-aimed at the user's meeting calendar so it works without
+manual setup.
+
+- Constant `MeetingCalendarDefaults.titles: Set<String> = ["Test IIT"]` (in
+  `CalendarManager.swift` or alongside `CalendarFilter`).
+- `CalendarManager.calendarIDs(forTitles: Set<String>) -> [String]` — identifiers
+  of available event calendars whose `title` is in the set (empty if none / not
+  authorized).
+- `AppContainer.seedDefaultMeetingCalendarsIfNeeded(settings:)`: if
+  `!settings.meetingCalendarsSeeded`, resolve
+  `calendarManager.calendarIDs(forTitles: MeetingCalendarDefaults.titles)`, write
+  the result into `settings.meetingCalendarIDs` (only when non-empty — if "Test
+  IIT" isn't present we leave the selection empty = all, still flipping the flag
+  so we don't re-seed), set `meetingCalendarsSeeded = true`, and push the new IDs
+  to the manager.
+- Called from the launch flow in `UnifiedOpenOatsView.swift` **after** calendar
+  access is ensured (the existing `updateCalendarIntegration` requests access in a
+  `Task`; the seed runs once that access attempt has resolved and the manager is
+  authorized). Seeding is a no-op when access is denied (flag stays false so a
+  later grant can seed).
+
 ### Wiring
 `AppContainer.updateCalendarIntegration(enabled:)` already runs at launch and on
 `calendarIntegrationEnabled` change; after it ensures the manager exists, set
@@ -150,13 +177,13 @@ nil or unauthorized, the list is empty and only the help text shows.
 | **Delete** `Meeting/GogCalendarClient.swift`, `Tests/.../GogCalendarClientTests.swift` | remove gog client |
 | **New** `Meeting/CalendarFilter.swift` | pure `keep(_:selected:)` |
 | **New** `Tests/.../CalendarFilterTests.swift` | filter unit tests |
-| `Meeting/CalendarManager.swift` | `selectedCalendarIDs`, filtered `eventCalendars()`, `availableCalendars()` + `CalendarChoice` |
-| `Settings/SettingsStore.swift` | remove gog settings; add `meetingCalendarIDs` |
-| `App/AppContainer.swift` | remove gog members; `updateCalendarIntegration(enabled:selectedCalendarIDs:)`; `updateSelectedCalendars(_:)` |
+| `Meeting/CalendarManager.swift` | `selectedCalendarIDs`, filtered `eventCalendars()`, `availableCalendars()` + `CalendarChoice`, `calendarIDs(forTitles:)`, `MeetingCalendarDefaults.titles` |
+| `Settings/SettingsStore.swift` | remove gog settings; add `meetingCalendarIDs`, `meetingCalendarsSeeded` |
+| `App/AppContainer.swift` | remove gog members; `updateCalendarIntegration(enabled:selectedCalendarIDs:)`; `updateSelectedCalendars(_:)`; `seedDefaultMeetingCalendarsIfNeeded(settings:)` |
 | `App/AppCoordinator.swift` | remove `attachCalendarEvent`, `currentMetadata` |
 | `App/LiveSessionController.swift` | remove gog lookup + task + cancel |
 | `Domain/MeetingTypes.swift` | remove `withCalendarEvent` |
-| `Views/UnifiedOpenOatsView.swift` | remove gog onChange/launch; add `meetingCalendarIDs` onChange; pass selected IDs to `updateCalendarIntegration` |
+| `Views/UnifiedOpenOatsView.swift` | remove gog onChange/launch; add `meetingCalendarIDs` onChange; pass selected IDs to `updateCalendarIntegration`; call `seedDefaultMeetingCalendarsIfNeeded` after access ensured |
 | `Views/SettingsView.swift` | remove gog UI; add calendar-picker UI |
 | `Tests/.../AppSettingsTests.swift` | remove gog cases; add `meetingCalendarIDs` cases |
 | `Tests/.../MeetingStateTests.swift` | remove `withCalendarEvent` cases |
@@ -165,12 +192,17 @@ nil or unauthorized, the list is empty and only the help text shows.
 
 **Unit**
 - `CalendarFilterTests`: empty selection keeps any id; non-empty keeps only members; non-member excluded.
-- `AppSettingsTests`: `meetingCalendarIDs` default `[]`; persists across `SettingsStore` instances (cross-instance round-trip).
+- `AppSettingsTests`: `meetingCalendarIDs` default `[]` and `meetingCalendarsSeeded` default `false`; both persist across `SettingsStore` instances (cross-instance round-trip).
 
 **Manual**
-- Settings shows the calendar list; check only "Test IIT"; record during a Test IIT event; confirm the saved title is the event summary.
-- Uncheck all → behaves as all-calendars (today's behavior).
+- Fresh launch (or with `meetingCalendarsSeeded` cleared): confirm "Test IIT" is auto-checked in the calendar list and `meetingCalendarsSeeded` becomes true.
+- Record during a Test IIT event; confirm the saved title is the event summary.
+- Uncheck all → behaves as all-calendars (today's behavior) and stays unchecked across relaunch (not re-seeded).
 - Confirm idle dashboard upcoming events also reflect the filter.
+
+The seed (`calendarIDs(forTitles:)`) reads a real `EKEventStore`, so it is
+validated manually; the title-matching is a simple `Set.contains` over live
+calendar titles.
 
 `availableCalendars()`/`eventCalendars()` themselves touch a real `EKEventStore`
 and are validated manually; the filtering decision is pure and fully unit-tested.
@@ -185,7 +217,15 @@ and are validated manually; the filtering decision is pure and fully unit-tested
 2. **Removal regressions.** The gog deletion touches several files; the kept
    pieces (`CalendarEventSelection`, `resolveSessionTitle`, their tests) must
    remain green. Covered by building + the existing suite after each removal step.
-3. **Setting key reuse.** `meetingCalendarIDs` is a new key; no migration needed.
+3. **Setting key reuse.** `meetingCalendarIDs` / `meetingCalendarsSeeded` are new
+   keys; no migration needed.
+4. **Seed timing.** The seed flips `meetingCalendarsSeeded` on the first authorized
+   read of available calendars, whether or not "Test IIT" was found — so it never
+   overwrites a later manual selection. Because `meetingCalendarsSeeded` is a new
+   key defaulting `false`, the current (existing) install **does** seed on its
+   next launch — Test IIT gets auto-selected then. Trade-off: if "Test IIT" is
+   subscribed *after* that first seeded launch, it won't auto-select; the user
+   checks it once in Settings.
 
 ## Non-Goals
 
