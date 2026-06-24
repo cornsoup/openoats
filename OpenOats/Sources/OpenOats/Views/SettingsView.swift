@@ -218,6 +218,25 @@ private struct GeneralSettingsTab: View {
 
                         CalendarStatusView()
                     }
+
+                    Divider()
+
+                    Toggle("Title meetings from Google Calendar (gog)", isOn: $settings.gogCalendarEnabled)
+                        .font(.system(size: 12))
+
+                    Text("Uses the gog CLI to find the calendar event at recording time and use its title for the session. Independent of macOS Calendar.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    if settings.gogCalendarEnabled {
+                        TextField("Account", text: $settings.gogCalendarAccount)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12))
+
+                        Text("The account must be authorized for calendar access: run `gog auth add \(settings.gogCalendarAccount) --services=calendar` in Terminal.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 if !settings.ignoredAppBundleIDs.isEmpty {
