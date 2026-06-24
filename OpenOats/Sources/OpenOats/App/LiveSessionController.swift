@@ -282,9 +282,12 @@ final class LiveSessionController {
 
     /// Kick off a non-blocking gog calendar lookup once a session is recording, and
     /// backfill the matched event into the session metadata. Best-effort; failures are silent.
+    /// Only runs when no calendar event is already attached — gog must never replace an
+    /// explicitly chosen event from EventKit or a calendarEventOverride.
     private func startGogCalendarLookup(settings: AppSettings) {
         gogLookupTask?.cancel()
         guard settings.gogCalendarEnabled, let client = container.gogCalendarClient else { return }
+        guard coordinator.currentMetadata?.calendarEvent == nil else { return }
         let account = settings.gogCalendarAccount
         gogLookupTask = Task { [weak self] in
             let event = await client.currentEvent(account: account)

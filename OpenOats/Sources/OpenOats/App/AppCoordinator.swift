@@ -80,6 +80,14 @@ final class AppCoordinator {
         return false
     }
 
+    /// The metadata for the active session, or nil when idle.
+    var currentMetadata: MeetingMetadata? {
+        switch state {
+        case .recording(let m), .ending(let m): return m
+        case .idle: return nil
+        }
+    }
+
     @ObservationIgnored nonisolated(unsafe) private var _sessionHistory: [SessionIndex] = []
     private(set) var sessionHistory: [SessionIndex] {
         get { access(keyPath: \.sessionHistory); return _sessionHistory }
