@@ -65,18 +65,11 @@ final class CalendarManager {
         )
         let events = store.events(matching: predicate)
 
-        // Prefer the event whose start is closest to now, breaking ties by duration
-        let best = events
+        let candidates = events
             .filter { !$0.isAllDay }
-            .min { a, b in
-                let distA = abs(a.startDate.timeIntervalSince(date))
-                let distB = abs(b.startDate.timeIntervalSince(date))
-                if distA != distB { return distA < distB }
-                return a.startDate < b.startDate
-            }
+            .map { CalendarEvent(from: $0) }
 
-        guard let best else { return nil }
-        return CalendarEvent(from: best)
+        return CalendarEventSelection.bestOverlap(events: candidates, at: date)
     }
 
     /// Upcoming calendar events starting within the given time window, ordered by start date.
