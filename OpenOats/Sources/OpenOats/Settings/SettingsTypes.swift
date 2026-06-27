@@ -162,6 +162,22 @@ enum SidebarMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum LivePaneMode: String, CaseIterable, Identifiable {
+    case suggestions
+    case liveNotes
+    case off
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .suggestions: "Suggestions"
+        case .liveNotes: "Live Notes"
+        case .off: "Off"
+        }
+    }
+}
+
 enum SidecastIntensity: String, CaseIterable, Identifiable {
     case quiet
     case balanced

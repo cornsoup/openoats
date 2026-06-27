@@ -185,4 +185,24 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(s2.meetingCalendarsSeeded)
     }
 
+    // MARK: - Live Pane Settings
+
+    func testLivePaneDefaults() {
+        let settings = makeSettings()
+        XCTAssertEqual(settings.livePaneMode, .suggestions)
+        XCTAssertEqual(settings.liveNotesIntervalSeconds, 30)
+    }
+
+    func testLivePanePersists() {
+        let settings = makeSettings()
+        settings.livePaneMode = .liveNotes
+        settings.liveNotesIntervalSeconds = 45
+        XCTAssertEqual(settings.livePaneMode, .liveNotes)
+        XCTAssertEqual(settings.liveNotesIntervalSeconds, 45)
+    }
+
+    func testLivePaneModeAllCases() {
+        XCTAssertEqual(LivePaneMode.allCases, [.suggestions, .liveNotes, .off])
+    }
+
 }

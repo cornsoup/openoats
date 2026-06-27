@@ -441,6 +441,28 @@ final class SettingsStore {
         }
     }
 
+    @ObservationIgnored nonisolated(unsafe) private var _livePaneMode: LivePaneMode
+    var livePaneMode: LivePaneMode {
+        get { access(keyPath: \.livePaneMode); return _livePaneMode }
+        set {
+            withMutation(keyPath: \.livePaneMode) {
+                _livePaneMode = newValue
+                defaults.set(newValue.rawValue, forKey: "livePaneMode")
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var _liveNotesIntervalSeconds: Int
+    var liveNotesIntervalSeconds: Int {
+        get { access(keyPath: \.liveNotesIntervalSeconds); return _liveNotesIntervalSeconds }
+        set {
+            withMutation(keyPath: \.liveNotesIntervalSeconds) {
+                _liveNotesIntervalSeconds = newValue
+                defaults.set(newValue, forKey: "liveNotesIntervalSeconds")
+            }
+        }
+    }
+
     @ObservationIgnored nonisolated(unsafe) private var _sidecastIntensity: SidecastIntensity
     var sidecastIntensity: SidecastIntensity {
         get { access(keyPath: \.sidecastIntensity); return _sidecastIntensity }
@@ -1342,6 +1364,9 @@ final class SettingsStore {
         self._suggestionsCollapsed = defaults.bool(forKey: "suggestionsCollapsed")
 
         self._sidebarMode = SidebarMode(rawValue: defaults.string(forKey: "sidebarMode") ?? "") ?? .classicSuggestions
+        self._livePaneMode = LivePaneMode(rawValue: defaults.string(forKey: "livePaneMode") ?? "") ?? .suggestions
+        let storedInterval = defaults.integer(forKey: "liveNotesIntervalSeconds")
+        self._liveNotesIntervalSeconds = storedInterval == 0 ? 30 : storedInterval
         self._sidecastIntensity = SidecastIntensity(rawValue: defaults.string(forKey: "sidecastIntensity") ?? "") ?? .balanced
         self._sidecastPersonas = Self.decodePersonas(defaults.data(forKey: "sidecastPersonas")) ?? SidecastPersona.starterPack
         self._sidecastTemperature = defaults.object(forKey: "sidecastTemperature") != nil
