@@ -153,6 +153,9 @@ final class LiveSessionController {
     private var lastNotifiedBatchSessionID: String?
     private var observedPeakAudioLevelSinceStart: Float = 0
     private var pendingRecoveryDiagnostics: PendingRecoveryDiagnostics?
+    /// The livePaneMode that was last applied via updateLiveNotes. Used to detect
+    /// mid-session changes and re-apply without re-firing on every poll tick.
+    private var lastAppliedLivePaneMode: LivePaneMode?
 
     init(coordinator: AppCoordinator, container: AppContainer) {
         self.coordinator = coordinator
@@ -292,6 +295,7 @@ final class LiveSessionController {
 
     /// Start or stop the Live Notes loop based on `livePaneMode`.
     private func updateLiveNotes(settings: AppSettings, calendarEvent: CalendarEvent?) {
+        lastAppliedLivePaneMode = settings.livePaneMode
         guard let engine = coordinator.liveNotesEngine else { return }
         engine.clear()
         guard settings.livePaneMode == .liveNotes else { return }
@@ -1503,6 +1507,19 @@ final class LiveSessionController {
         if pendingExternalCommandID != observedPendingExternalCommandID {
             observedPendingExternalCommandID = pendingExternalCommandID
             handlePendingExternalCommandIfPossible(settings: settings, openNotesWindow: openNotesWindow)
+        }
+
+        // React to livePaneMode changes during a running session.
+        // Guards: only fires when actively recording (not idle/ending), and only when the
+        // mode actually changed from the last applied value — preventing per-tick re-firing.
+        if case .recording = coordinator.state,
+           settings.livePaneMode != lastAppliedLivePaneMode {
+            let runningEvent: CalendarEvent?
+            switch coordinator.state {
+            case .recording(let m), .ending(let m): runningEvent = m.calendarEvent
+            case .idle: runningEvent = nil
+            }
+            updateLiveNotes(settings: settings, calendarEvent: runningEvent)
         }
     }
 }
