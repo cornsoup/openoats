@@ -56,6 +56,9 @@ final class LiveSessionState {
     var liveDecisions:     [SummaryItem] = []
     var liveOpenQuestions: [SummaryItem] = []
     var liveSummaryIsGenerating: Bool = false
+    var liveNotesMarkdown: String = ""
+    var liveNotesIsGenerating: Bool = false
+    var liveNotesUpdatedAt: Date? = nil
 }
 
 /// Owns all live session side effects: polling, utterance ingestion,
@@ -279,6 +282,31 @@ final class LiveSessionController {
 
     // MARK: - Session Actions
 
+    /// Resolve the session's template the same way the post-meeting notes do.
+    private func sessionNotesTemplate() -> MeetingTemplate {
+        let id = coordinator.sessionTemplateSnapshot?.id ?? TemplateStore.genericID
+        return coordinator.templateStore.template(for: id)
+            ?? coordinator.templateStore.template(for: TemplateStore.genericID)
+            ?? TemplateStore.builtInTemplates.first!
+    }
+
+    /// Start or stop the Live Notes loop based on `livePaneMode`.
+    private func updateLiveNotes(settings: AppSettings, calendarEvent: CalendarEvent?) {
+        guard let engine = coordinator.liveNotesEngine else { return }
+        engine.clear()
+        guard settings.livePaneMode == .liveNotes else { return }
+        engine.start(
+            transcriptProvider: { [weak coordinator] in
+                guard let coordinator else { return [] }
+                return LiveNotesEngine.records(from: coordinator.transcriptStore.utterances)
+            },
+            templateProvider: { [weak self] in
+                self?.sessionNotesTemplate() ?? TemplateStore.builtInTemplates.first!
+            },
+            calendarEventProvider: { calendarEvent }
+        )
+    }
+
     func startSession(
         settings: AppSettings,
         calendarEventOverride: CalendarEvent? = nil,
@@ -298,6 +326,7 @@ final class LiveSessionController {
         )
         pendingInitialScratchpad = initialScratchpad?.trimmingCharacters(in: .newlines)
         let metadata = MeetingMetadata.manual(calendarEvent: calEvent)
+        updateLiveNotes(settings: settings, calendarEvent: calEvent)
 
         if settings.transcriptionModel.isCloud {
             state.errorMessage = nil
@@ -319,6 +348,7 @@ final class LiveSessionController {
     }
 
     func stopSession(settings: AppSettings) {
+        coordinator.liveNotesEngine?.clear()
         DiagnosticsSupport.record(category: "meeting", message: "Stop requested")
         coordinator.handle(.userStopped, settings: settings)
     }
@@ -490,12 +520,14 @@ final class LiveSessionController {
 
         let sessionID = currentSessionID
 
-        // Trigger the active realtime assistant from either speaker
-        switch settings.sidebarMode {
-        case .classicSuggestions:
-            coordinator.suggestionEngine?.onUtterance(last)
-        case .sidecast:
-            coordinator.sidecastEngine?.onUtterance(last)
+        // Trigger the active realtime assistant only when the live pane shows Suggestions.
+        if settings.livePaneMode == .suggestions {
+            switch settings.sidebarMode {
+            case .classicSuggestions:
+                coordinator.suggestionEngine?.onUtterance(last)
+            case .sidecast:
+                coordinator.sidecastEngine?.onUtterance(last)
+            }
         }
 
         // Live summary runs independently of sidebar mode
@@ -1287,6 +1319,11 @@ final class LiveSessionController {
         }
         let summaryEngine = coordinator.liveSummaryEngine
         set(\.liveSummaryIsGenerating, summaryEngine?.isGenerating ?? false)
+
+        let liveNotes = coordinator.liveNotesEngine
+        set(\.liveNotesMarkdown, liveNotes?.markdown ?? "")
+        set(\.liveNotesIsGenerating, liveNotes?.isGenerating ?? false)
+        set(\.liveNotesUpdatedAt, liveNotes?.lastUpdatedAt)
 
         let nextSummaries = summaryEngine?.summariesByLevel ?? [:]
         if state.liveSummariesByLevel != nextSummaries {
