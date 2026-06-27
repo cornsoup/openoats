@@ -17,6 +17,7 @@ struct AppViewServices {
     let suggestionEngine: SuggestionEngine
     let sidecastEngine: SidecastEngine
     let liveSummaryEngine: LiveSummaryEngine
+    let liveNotesEngine: LiveNotesEngine
 }
 
 struct AppRecordingServices {

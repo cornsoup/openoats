@@ -139,12 +139,14 @@ final class AppContainer {
             settings: settings
         )
         let liveSummaryEngine = LiveSummaryEngine(settings: settings)
+        let liveNotesEngine = LiveNotesEngine(settings: settings)
 
         return AppViewServices(
             knowledgeBase: knowledgeBase,
             suggestionEngine: suggestionEngine,
             sidecastEngine: sidecastEngine,
-            liveSummaryEngine: liveSummaryEngine
+            liveSummaryEngine: liveSummaryEngine,
+            liveNotesEngine: liveNotesEngine
         )
     }
 
@@ -188,7 +190,8 @@ final class AppContainer {
             knowledgeBase: services.knowledgeBase,
             suggestionEngine: services.suggestionEngine,
             sidecastEngine: services.sidecastEngine,
-            liveSummaryEngine: services.liveSummaryEngine
+            liveSummaryEngine: services.liveSummaryEngine,
+            liveNotesEngine: services.liveNotesEngine
         )
     }
 

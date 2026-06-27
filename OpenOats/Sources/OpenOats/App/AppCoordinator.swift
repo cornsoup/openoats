@@ -135,6 +135,11 @@ final class AppCoordinator {
         get { _liveSummaryEngine }
     }
 
+    @ObservationIgnored nonisolated(unsafe) private var _liveNotesEngine: LiveNotesEngine?
+    nonisolated var liveNotesEngine: LiveNotesEngine? {
+        get { _liveNotesEngine }
+    }
+
     // Set by UnifiedOpenOatsView (Task 6) when the sidebar selection changes.
     // Read by the "Open Selected in New Window" menu command to decide
     // whether to enable itself.
@@ -162,12 +167,14 @@ final class AppCoordinator {
         knowledgeBase: KnowledgeBase,
         suggestionEngine: SuggestionEngine,
         sidecastEngine: SidecastEngine,
-        liveSummaryEngine: LiveSummaryEngine
+        liveSummaryEngine: LiveSummaryEngine,
+        liveNotesEngine: LiveNotesEngine
     ) {
         _knowledgeBase = knowledgeBase
         _suggestionEngine = suggestionEngine
         _sidecastEngine = sidecastEngine
         _liveSummaryEngine = liveSummaryEngine
+        _liveNotesEngine = liveNotesEngine
     }
 
     /// The template snapshot frozen at session start (not stop).

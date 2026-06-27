@@ -551,7 +551,8 @@ final class LiveSessionControllerTests: XCTestCase {
                 knowledgeBase: knowledgeBase,
                 settings: settings
             ),
-            liveSummaryEngine: LiveSummaryEngine(settings: settings)
+            liveSummaryEngine: LiveSummaryEngine(settings: settings),
+            liveNotesEngine: LiveNotesEngine(settings: settings)
         )
 
         let event = CalendarEvent(
@@ -1143,7 +1144,8 @@ final class LiveSessionControllerTests: XCTestCase {
                 knowledgeBase: knowledgeBase,
                 settings: settings
             ),
-            liveSummaryEngine: LiveSummaryEngine(settings: settings)
+            liveSummaryEngine: LiveSummaryEngine(settings: settings),
+            liveNotesEngine: LiveNotesEngine(settings: settings)
         )
 
         let task = Task {
