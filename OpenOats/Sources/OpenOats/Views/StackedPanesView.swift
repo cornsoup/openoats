@@ -47,19 +47,42 @@ struct StackedPanesView: View {
             }
             .frame(minHeight: settings.summaryCollapsed ? 28 : 80)
 
-            PaneShell(
-                title: "Suggestions",
-                badge: controllerState.suggestions.isEmpty ? nil : "(\(controllerState.suggestions.count))",
-                paneID: .suggestions,
-                isCollapsed: $settings.suggestionsCollapsed,
-                focusedPane: focusedPane
-            ) {
-                InlineSuggestionsView(
-                    suggestions: controllerState.suggestions,
-                    zoom: settings.suggestionsZoom
-                )
+            switch settings.livePaneMode {
+            case .suggestions:
+                PaneShell(
+                    title: "Suggestions",
+                    badge: controllerState.suggestions.isEmpty ? nil : "(\(controllerState.suggestions.count))",
+                    paneID: .suggestions,
+                    isCollapsed: $settings.suggestionsCollapsed,
+                    focusedPane: focusedPane
+                ) {
+                    InlineSuggestionsView(
+                        suggestions: controllerState.suggestions,
+                        zoom: settings.suggestionsZoom
+                    )
+                }
+                .frame(minHeight: settings.suggestionsCollapsed ? 28 : 80)
+
+            case .liveNotes:
+                PaneShell(
+                    title: "Live Notes",
+                    badge: nil,
+                    paneID: .suggestions,
+                    isCollapsed: $settings.suggestionsCollapsed,
+                    focusedPane: focusedPane
+                ) {
+                    LiveNotesPanel(
+                        markdown: controllerState.liveNotesMarkdown,
+                        isGenerating: controllerState.liveNotesIsGenerating,
+                        updatedAt: controllerState.liveNotesUpdatedAt,
+                        zoom: settings.suggestionsZoom
+                    )
+                }
+                .frame(minHeight: settings.suggestionsCollapsed ? 28 : 80)
+
+            case .off:
+                EmptyView()
             }
-            .frame(minHeight: settings.suggestionsCollapsed ? 28 : 80)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
