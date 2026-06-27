@@ -18,6 +18,7 @@ struct SidecastSettingsTab: View {
                             Text(mode.displayName).tag(mode)
                         }
                     }
+                    .font(.system(size: 12))
 
                     if settings.livePaneMode == .liveNotes {
                         Stepper("Refresh every \(settings.liveNotesIntervalSeconds)s",
@@ -39,21 +40,21 @@ struct SidecastSettingsTab: View {
                         Text(settings.sidebarMode.description)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
+                    }
 
-                        Toggle("Floating sidebar panel", isOn: $settings.suggestionPanelEnabled)
-                            .font(.system(size: 12))
-
-                        Picker("Intensity", selection: $settings.sidecastIntensity) {
-                            ForEach(SidecastIntensity.allCases) { level in
-                                Text(level.displayName).tag(level)
-                            }
-                        }
+                    Toggle("Floating sidebar panel", isOn: $settings.suggestionPanelEnabled)
                         .font(.system(size: 12))
 
-                        Text(settings.sidecastIntensity.description)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                    Picker("Intensity", selection: $settings.sidecastIntensity) {
+                        ForEach(SidecastIntensity.allCases) { level in
+                            Text(level.displayName).tag(level)
+                        }
                     }
+                    .font(.system(size: 12))
+
+                    Text(settings.sidecastIntensity.description)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Personas") {
