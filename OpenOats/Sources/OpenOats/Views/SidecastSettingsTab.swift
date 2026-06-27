@@ -13,30 +13,47 @@ struct SidecastSettingsTab: View {
         ScrollView {
             Form {
                 Section("Sidebar") {
-                    Picker("Mode", selection: $settings.sidebarMode) {
-                        ForEach(SidebarMode.allCases) { mode in
+                    Picker("Live pane", selection: $settings.livePaneMode) {
+                        ForEach(LivePaneMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)
                         }
                     }
-                    .font(.system(size: 12))
 
-                    Text(settings.sidebarMode.description)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                    if settings.livePaneMode == .liveNotes {
+                        Stepper("Refresh every \(settings.liveNotesIntervalSeconds)s",
+                                value: $settings.liveNotesIntervalSeconds, in: 10...120, step: 5)
+                            .font(.system(size: 12))
+                        Text("Re-generates the full meeting notes from the transcript so far, on this interval, skipping silences.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
 
-                    Toggle("Floating sidebar panel", isOn: $settings.suggestionPanelEnabled)
+                    if settings.livePaneMode == .suggestions {
+                        Picker("Mode", selection: $settings.sidebarMode) {
+                            ForEach(SidebarMode.allCases) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
+                        }
                         .font(.system(size: 12))
 
-                    Picker("Intensity", selection: $settings.sidecastIntensity) {
-                        ForEach(SidecastIntensity.allCases) { level in
-                            Text(level.displayName).tag(level)
-                        }
-                    }
-                    .font(.system(size: 12))
+                        Text(settings.sidebarMode.description)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
 
-                    Text(settings.sidecastIntensity.description)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        Toggle("Floating sidebar panel", isOn: $settings.suggestionPanelEnabled)
+                            .font(.system(size: 12))
+
+                        Picker("Intensity", selection: $settings.sidecastIntensity) {
+                            ForEach(SidecastIntensity.allCases) { level in
+                                Text(level.displayName).tag(level)
+                            }
+                        }
+                        .font(.system(size: 12))
+
+                        Text(settings.sidecastIntensity.description)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Personas") {
