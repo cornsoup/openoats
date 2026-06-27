@@ -14,11 +14,90 @@ enum LiveNotesScheduler {
 @MainActor
 @Observable
 final class LiveNotesEngine {
+    private(set) var markdown: String = ""
+    private(set) var isGenerating: Bool = false
+    private(set) var lastUpdatedAt: Date?
+
+    @ObservationIgnored private let settings: AppSettings
+    @ObservationIgnored private let notes = NotesEngine()
+    @ObservationIgnored private var loopTask: Task<Void, Never>?
+    @ObservationIgnored private var lastGeneratedCount = 0
+    @ObservationIgnored private let minUtterances = 4
+
+    init(settings: AppSettings) {
+        self.settings = settings
+    }
+
     /// Adapt live utterances to the SessionRecord form NotesEngine consumes.
     nonisolated static func records(from utterances: [Utterance]) -> [SessionRecord] {
         utterances.map {
             SessionRecord(speaker: $0.speaker, text: $0.text,
                           timestamp: $0.timestamp, cleanedText: $0.cleanedText)
         }
+    }
+
+    /// Start the periodic regeneration loop. Providers are read fresh each tick,
+    /// so template/calendar/transcript timing is handled lazily.
+    func start(
+        transcriptProvider: @escaping () -> [SessionRecord],
+        templateProvider: @escaping () -> MeetingTemplate,
+        calendarEventProvider: @escaping () -> CalendarEvent?
+    ) {
+        loopTask?.cancel()
+        markdown = ""
+        isGenerating = false
+        lastUpdatedAt = nil
+        lastGeneratedCount = 0
+
+        loopTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { break }
+                let interval = max(5, self.settings.liveNotesIntervalSeconds)
+                try? await Task.sleep(for: .seconds(interval))
+                guard !Task.isCancelled else { break }
+
+                let records = transcriptProvider()
+                guard LiveNotesScheduler.shouldRegenerate(
+                    currentCount: records.count,
+                    lastGeneratedCount: self.lastGeneratedCount,
+                    minUtterances: self.minUtterances,
+                    isGenerating: self.isGenerating
+                ) else { continue }
+
+                self.lastGeneratedCount = records.count
+                await self.regenerate(
+                    records: records,
+                    template: templateProvider(),
+                    calendarEvent: calendarEventProvider()
+                )
+            }
+        }
+    }
+
+    func clear() {
+        loopTask?.cancel()
+        loopTask = nil
+        markdown = ""
+        isGenerating = false
+        lastUpdatedAt = nil
+        lastGeneratedCount = 0
+    }
+
+    private func regenerate(records: [SessionRecord], template: MeetingTemplate,
+                            calendarEvent: CalendarEvent?) async {
+        isGenerating = true
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            notes.generate(
+                transcript: records,
+                template: template,
+                settings: settings,
+                calendarEvent: calendarEvent
+            ) {
+                cont.resume()
+            }
+        }
+        markdown = notes.generatedMarkdown
+        isGenerating = false
+        lastUpdatedAt = Date()
     }
 }
