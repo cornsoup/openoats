@@ -30,6 +30,10 @@ final class AppUpdaterController {
 
         do {
             try updater.start()
+            // OpenOats updates are applied manually via git merges — never auto-check.
+            // This also self-heals any stale `SUEnableAutomaticChecks` preference a
+            // previous build persisted (which otherwise overrides the Info.plist default).
+            updater.automaticallyChecksForUpdates = false
         } catch {
             presentStartupError()
         }
