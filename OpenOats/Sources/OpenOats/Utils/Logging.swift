@@ -21,6 +21,7 @@ enum Log {
     static let knowledgeBase = Logger(subsystem: subsystem, category: "KnowledgeBase")
     static let suggestionEngine = Logger(subsystem: subsystem, category: "SuggestionEngine")
     static let sidecast = Logger(subsystem: subsystem, category: "SidecastEngine")
+    static let liveNotes = Logger(subsystem: subsystem, category: "LiveNotesEngine")
     static let templateStore = Logger(subsystem: subsystem, category: "TemplateStore")
     static let diagnostics = Logger(subsystem: subsystem, category: "Diagnostics")
 

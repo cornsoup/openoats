@@ -49,6 +49,7 @@ final class LiveNotesEngine {
         lastUpdatedAt = nil
         lastGeneratedCount = 0
 
+        Log.liveNotes.info("start: loop launched")
         loopTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { break }
@@ -57,12 +58,14 @@ final class LiveNotesEngine {
                 guard !Task.isCancelled else { break }
 
                 let records = transcriptProvider()
-                guard LiveNotesScheduler.shouldRegenerate(
+                let should = LiveNotesScheduler.shouldRegenerate(
                     currentCount: records.count,
                     lastGeneratedCount: self.lastGeneratedCount,
                     minUtterances: self.minUtterances,
                     isGenerating: self.isGenerating
-                ) else { continue }
+                )
+                Log.liveNotes.info("tick: records=\(records.count, privacy: .public) lastGen=\(self.lastGeneratedCount, privacy: .public) isGenerating=\(self.isGenerating, privacy: .public) -> regen=\(should, privacy: .public)")
+                guard should else { continue }
 
                 self.lastGeneratedCount = records.count
                 await self.regenerate(
@@ -86,6 +89,7 @@ final class LiveNotesEngine {
     private func regenerate(records: [SessionRecord], template: MeetingTemplate,
                             calendarEvent: CalendarEvent?) async {
         isGenerating = true
+        Log.liveNotes.info("regenerate: start records=\(records.count, privacy: .public) provider=\(self.settings.llmProvider.rawValue, privacy: .public) model=\(self.settings.selectedModel, privacy: .public)")
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             notes.generate(
                 transcript: records,
@@ -96,7 +100,16 @@ final class LiveNotesEngine {
                 cont.resume()
             }
         }
-        markdown = notes.generatedMarkdown
+        let produced = notes.generatedMarkdown
+        let genError = notes.error
+        Log.liveNotes.info("regenerate: done chars=\(produced.count, privacy: .public) error=\(genError ?? "nil", privacy: .public)")
+        if !produced.isEmpty {
+            markdown = produced
+        } else if let genError {
+            markdown = "⚠️ Live notes generation failed:\n\n\(genError)"
+        } else {
+            markdown = "⚠️ Live notes returned no content (model: \(settings.selectedModel)). This is unexpected — please report."
+        }
         isGenerating = false
         lastUpdatedAt = Date()
     }
